@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Find SDL3 package
 find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3)
 
+# Find TBB package
+find_package(TBB REQUIRED CONFIG REQUIRED COMPONENTS tbb)
+
 # Source files
 set(SOURCES
     src/main.cpp
@@ -40,6 +43,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # Link SDL3
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3)
+
+# Link TBB
+target_link_libraries(${PROJECT_NAME} PRIVATE TBB::tbb)
 
 # Set output directory
 set_target_properties(${PROJECT_NAME} PROPERTIES

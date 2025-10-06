@@ -1,6 +1,8 @@
 #include <SDL3/SDL.h>
+#include <execution>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include "Camera.h"
@@ -132,24 +134,32 @@ Vec3 traceRay(const Ray &ray,
 void render(std::vector<unsigned char> &pixels, const Camera &camera,
             const std::vector<std::shared_ptr<Object>> &objects,
             const std::vector<Light> &lights) {
-  for (int j = 0; j < WINDOW_HEIGHT; j++) {
-    for (int i = 0; i < WINDOW_WIDTH; i++) {
-      double u = static_cast<double>(i) / (WINDOW_WIDTH - 1);
-      double v =
-          static_cast<double>(WINDOW_HEIGHT - 1 - j) / (WINDOW_HEIGHT - 1);
+  std::vector<int> rows(WINDOW_HEIGHT);
+  std::iota(rows.begin(), rows.end(), 0);
 
-      Ray ray = camera.getRay(u, v);
-      Vec3 color = traceRay(ray, objects, lights, MAX_DEPTH);
+  std::for_each(
+      std::execution::par_unseq, rows.begin(), rows.end(), [&](int j) {
+        std::vector<int> cols(WINDOW_WIDTH);
+        std::iota(cols.begin(), cols.end(), 0);
 
-      int pixelIndex = (j * WINDOW_WIDTH + i) * 3;
-      pixels[pixelIndex + 0] =
-          static_cast<unsigned char>(std::clamp(color.x, 0.0, 1.0) * 255.99);
-      pixels[pixelIndex + 1] =
-          static_cast<unsigned char>(std::clamp(color.y, 0.0, 1.0) * 255.99);
-      pixels[pixelIndex + 2] =
-          static_cast<unsigned char>(std::clamp(color.z, 0.0, 1.0) * 255.99);
-    }
-  }
+        std::for_each(std::execution::par_unseq, cols.begin(), cols.end(),
+                      [&](int i) {
+                        double u = static_cast<double>(i) / (WINDOW_WIDTH - 1);
+                        double v = static_cast<double>(WINDOW_HEIGHT - 1 - j) /
+                                   (WINDOW_HEIGHT - 1);
+
+                        Ray ray = camera.getRay(u, v);
+                        Vec3 color = traceRay(ray, objects, lights, MAX_DEPTH);
+
+                        int pixelIndex = (j * WINDOW_WIDTH + i) * 3;
+                        pixels[pixelIndex + 0] = static_cast<unsigned char>(
+                            std::clamp(color.x, 0.0, 1.0) * 255.99);
+                        pixels[pixelIndex + 1] = static_cast<unsigned char>(
+                            std::clamp(color.y, 0.0, 1.0) * 255.99);
+                        pixels[pixelIndex + 2] = static_cast<unsigned char>(
+                            std::clamp(color.z, 0.0, 1.0) * 255.99);
+                      });
+      });
 }
 
 int main(int argc, char *argv[]) {
