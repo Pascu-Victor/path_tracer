@@ -16,6 +16,7 @@ set(SOURCES
     src/Object.cpp
     src/Sphere.cpp
     src/Camera.cpp
+    src/Light.cpp
 )
 
 # Header files
@@ -26,6 +27,7 @@ set(HEADERS
     include/Object.h
     include/Sphere.h
     include/Camera.h
+    include/Light.h
 )
 
 # Create executable
