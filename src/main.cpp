@@ -129,6 +129,29 @@ Vec3 traceRay(const Ray &ray,
   return (1.0 - t) * Vec3(1.0, 1.0, 1.0) + t * Vec3(0.5, 0.7, 1.0);
 }
 
+void render(std::vector<unsigned char> &pixels, const Camera &camera,
+            const std::vector<std::shared_ptr<Object>> &objects,
+            const std::vector<Light> &lights) {
+  for (int j = 0; j < WINDOW_HEIGHT; j++) {
+    for (int i = 0; i < WINDOW_WIDTH; i++) {
+      double u = static_cast<double>(i) / (WINDOW_WIDTH - 1);
+      double v =
+          static_cast<double>(WINDOW_HEIGHT - 1 - j) / (WINDOW_HEIGHT - 1);
+
+      Ray ray = camera.getRay(u, v);
+      Vec3 color = traceRay(ray, objects, lights, MAX_DEPTH);
+
+      int pixelIndex = (j * WINDOW_WIDTH + i) * 3;
+      pixels[pixelIndex + 0] =
+          static_cast<unsigned char>(std::clamp(color.x, 0.0, 1.0) * 255.99);
+      pixels[pixelIndex + 1] =
+          static_cast<unsigned char>(std::clamp(color.y, 0.0, 1.0) * 255.99);
+      pixels[pixelIndex + 2] =
+          static_cast<unsigned char>(std::clamp(color.z, 0.0, 1.0) * 255.99);
+    }
+  }
+}
+
 int main(int argc, char *argv[]) {
   // Initialize SDL
   if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -170,7 +193,9 @@ int main(int argc, char *argv[]) {
 
   // Setup camera
   double aspectRatio = static_cast<double>(WINDOW_WIDTH) / WINDOW_HEIGHT;
-  Camera camera(Vec3(0, 0, 2), // Camera position
+  const Vec3 cameraOrigin = Vec3(0, 0, 2);
+
+  Camera camera(cameraOrigin,  // Camera position
                 Vec3(0, 0, 0), // Look at point
                 Vec3(0, 1, 0), // Up vector
                 60.0,          // Vertical field of view
@@ -211,39 +236,16 @@ int main(int argc, char *argv[]) {
   lights.push_back(
       Light(Vec3(0, -0.2, 0.5), Vec3(1.0, 0.4, 0.4), 2.0)); // Red light
 
-  // Render the scene
-  std::cout << "Rendering scene..." << std::endl;
-
   std::vector<unsigned char> pixels(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
-
-  for (int j = 0; j < WINDOW_HEIGHT; j++) {
-    for (int i = 0; i < WINDOW_WIDTH; i++) {
-      double u = static_cast<double>(i) / (WINDOW_WIDTH - 1);
-      double v =
-          static_cast<double>(WINDOW_HEIGHT - 1 - j) / (WINDOW_HEIGHT - 1);
-
-      Ray ray = camera.getRay(u, v);
-      Vec3 color = traceRay(ray, objects, lights, MAX_DEPTH);
-
-      int pixelIndex = (j * WINDOW_WIDTH + i) * 3;
-      pixels[pixelIndex + 0] =
-          static_cast<unsigned char>(std::clamp(color.x, 0.0, 1.0) * 255.99);
-      pixels[pixelIndex + 1] =
-          static_cast<unsigned char>(std::clamp(color.y, 0.0, 1.0) * 255.99);
-      pixels[pixelIndex + 2] =
-          static_cast<unsigned char>(std::clamp(color.z, 0.0, 1.0) * 255.99);
-    }
-  }
-
-  std::cout << "Rendering complete!" << std::endl;
-
-  // Update texture with rendered pixels
-  SDL_UpdateTexture(texture, nullptr, pixels.data(), WINDOW_WIDTH * 3);
 
   // Main loop
   bool running = true;
   SDL_Event event;
 
+  double theta = 0.0;
+  const double orbitRadius = 2.0;
+  Vec3 cameraLookFrom;
+  cameraLookFrom.y = cameraOrigin.y;
   while (running) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_EVENT_QUIT) {
@@ -254,6 +256,21 @@ int main(int argc, char *argv[]) {
         }
       }
     }
+
+    double x = cameraOrigin.x + orbitRadius * std::cos(theta);
+    double z = cameraOrigin.y + orbitRadius * std::sin(theta);
+
+    cameraLookFrom.x = x;
+    cameraLookFrom.z = z;
+
+    camera.setLookFrom(cameraLookFrom);
+
+    theta += 1.0 / 180.0;
+
+    render(pixels, camera, objects, lights);
+
+    // Update texture with rendered pixels
+    SDL_UpdateTexture(texture, nullptr, pixels.data(), WINDOW_WIDTH * 3);
 
     // Clear and render
     SDL_RenderClear(renderer);
