@@ -3,6 +3,7 @@ project(PathTracer VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE Release)
 
 # Find SDL3 package
 find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3)
@@ -35,6 +36,10 @@ set(HEADERS
 
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+
+target_compile_options(${PROJECT_NAME} PRIVATE -ffast-math -flto -O3)
+
+target_link_options(${PROJECT_NAME} PRIVATE -flto)
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE 
