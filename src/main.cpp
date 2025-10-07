@@ -203,7 +203,7 @@ int main(int argc, char *argv[]) {
 
   // Setup camera
   double aspectRatio = static_cast<double>(WINDOW_WIDTH) / WINDOW_HEIGHT;
-  const Vec3 cameraOrigin = Vec3(0, 0, 2);
+  const Vec3 cameraOrigin = Vec3(0, 0, 0);
 
   Camera camera(cameraOrigin,  // Camera position
                 Vec3(0, 0, 0), // Look at point
