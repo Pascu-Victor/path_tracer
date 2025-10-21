@@ -1,4 +1,5 @@
 #include "Camera.h"
+#include "SceneWrappers.h"
 #include "Vec3.h"
 #include "VulkanRenderer.h"
 
@@ -33,8 +34,7 @@ bool loadVolumetricData(const std::string &datFile, const std::string &rawFile,
 
   while (std::getline(datStream, line)) {
     // Parse resolution from .dat file
-    // Expected format like: "ObjectModel:	I" or "Resolution:	400 296
-    // 352"
+    // Expected format: "ObjectModel:	I" or "Resolution:	400 296 352"
     if (line.find("Resolution") != std::string::npos) {
       int x, y, z;
       if (sscanf(line.c_str(), "Resolution: %d %d %d", &x, &y, &z) == 3 ||
@@ -117,125 +117,74 @@ int main(int argc, char *argv[]) {
                 60.0,            // Vertical field of view
                 aspectRatio);
 
-  // Create scene with objects
-  std::vector<GPUSphere> gpuSpheres;
-  std::vector<GPUMaterial> gpuMaterials;
-  std::vector<GPULight> gpuLights;
-  std::vector<GPUVolumetricData> gpuVolumes;
+  // Create scene with objects using wrapper classes
+  std::vector<Sphere> spheres;
+  std::vector<Light> lights;
+  std::vector<VolumetricData> volumes;
 
-  // Material definitions (converted to GPU format)
-  GPUMaterial redMat{};
-  redMat.colorAndAmbient = glm::vec4(0.8f, 0.2f, 0.2f, 0.1f);
-  redMat.diffuseSpecularShiny = glm::vec4(0.7f, 0.3f, 32.0f, 0.0f);
-  redMat.transIsoEmissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  redMat.emissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  redMat.scatterAndAbsorption = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  gpuMaterials.push_back(redMat);
+  // Material definitions using clean wrapper API
+  // Red diffuse material
+  Material redMat = Material::Diffuse(glm::vec3(0.8f, 0.2f, 0.2f), 0.7f, 0.1f);
+  redMat.setSpecular(0.3f);
+  redMat.setShininess(32.0f);
 
-  GPUMaterial yellowMat{};
-  yellowMat.colorAndAmbient = glm::vec4(0.8f, 0.8f, 0.2f, 0.1f);
-  yellowMat.diffuseSpecularShiny = glm::vec4(0.6f, 0.1f, 16.0f, 0.0f);
-  yellowMat.transIsoEmissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  yellowMat.emissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  yellowMat.scatterAndAbsorption = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  gpuMaterials.push_back(yellowMat);
+  // Yellow diffuse material with low specularity
+  Material yellowMat =
+      Material::Diffuse(glm::vec3(0.8f, 0.8f, 0.2f), 0.6f, 0.1f);
+  yellowMat.setSpecular(0.1f);
+  yellowMat.setShininess(16.0f);
 
-  GPUMaterial greenMat{};
-  greenMat.colorAndAmbient = glm::vec4(0.2f, 0.8f, 0.2f, 0.1f);
-  greenMat.diffuseSpecularShiny = glm::vec4(0.7f, 0.3f, 32.0f, 0.0f);
-  greenMat.transIsoEmissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  greenMat.emissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  greenMat.scatterAndAbsorption = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  gpuMaterials.push_back(greenMat);
+  // Green diffuse material
+  Material greenMat =
+      Material::Diffuse(glm::vec3(0.2f, 0.8f, 0.2f), 0.7f, 0.1f);
+  greenMat.setSpecular(0.3f);
+  greenMat.setShininess(32.0f);
 
-  GPUMaterial blueMat{};
-  blueMat.colorAndAmbient = glm::vec4(0.2f, 0.2f, 0.8f, 0.1f);
-  blueMat.diffuseSpecularShiny = glm::vec4(0.7f, 0.3f, 32.0f, 0.0f);
-  blueMat.transIsoEmissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  blueMat.emissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  blueMat.scatterAndAbsorption = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  gpuMaterials.push_back(blueMat);
+  // Blue diffuse material
+  Material blueMat = Material::Diffuse(glm::vec3(0.2f, 0.2f, 0.8f), 0.7f, 0.1f);
+  blueMat.setSpecular(0.3f);
+  blueMat.setShininess(32.0f);
 
-  GPUMaterial mirrorMat{};
-  mirrorMat.colorAndAmbient = glm::vec4(0.9f, 0.9f, 0.9f, 0.1f);
-  mirrorMat.diffuseSpecularShiny = glm::vec4(0.2f, 0.8f, 128.0f, 0.7f);
-  mirrorMat.transIsoEmissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  mirrorMat.emissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  mirrorMat.scatterAndAbsorption = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  gpuMaterials.push_back(mirrorMat);
+  // Mirror material
+  Material mirrorMat = Material::Mirror(glm::vec3(0.9f, 0.9f, 0.9f), 0.7f);
 
   // Volumetric material for walnut
-  GPUMaterial volumetricMat{};
-  volumetricMat.colorAndAmbient = glm::vec4(0.0f, 0.0f, 0.0f, 0.1f);
-  volumetricMat.diffuseSpecularShiny = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  volumetricMat.transIsoEmissive =
-      glm::vec4(0.0f, 1.0f, 0.0f, 0.0f); // isVolumetric = 1
-  volumetricMat.emissive = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  volumetricMat.scatterAndAbsorption =
-      glm::vec4(0.8f, 0.6f, 0.4f, 2.0f); // scatterColor, absorptionCoeff
-  gpuMaterials.push_back(volumetricMat);
+  Material volumetricMat =
+      Material::Volumetric(glm::vec3(0.8f, 0.6f, 0.4f), 2.0f);
 
-  // Sphere definitions
-  GPUSphere redSphere{};
-  redSphere.center = glm::vec3(0.0f, 0.0f, -1.0f);
-  redSphere.radius = 0.5f;
-  redSphere.color = glm::vec3(0.8f, 0.2f, 0.2f);
-  redSphere.materialIndex = 0;
-  gpuSpheres.push_back(redSphere);
+  // Sphere definitions using wrapper class with Material references
+  spheres.push_back(Sphere(glm::vec3(0.0f, 0.0f, -1.0f), 0.5f,
+                           glm::vec3(0.8f, 0.2f, 0.2f), redMat)); // Red sphere
 
-  GPUSphere greenSphere{};
-  greenSphere.center = glm::vec3(-1.0f, 0.0f, -1.0f);
-  greenSphere.radius = 0.3f;
-  greenSphere.color = glm::vec3(0.2f, 0.8f, 0.2f);
-  greenSphere.materialIndex = 2;
-  gpuSpheres.push_back(greenSphere);
+  spheres.push_back(Sphere(glm::vec3(-1.0f, 0.0f, -1.0f), 0.3f,
+                           glm::vec3(0.2f, 0.8f, 0.2f),
+                           greenMat)); // Green sphere
 
-  GPUSphere blueSphere{};
-  blueSphere.center = glm::vec3(1.0f, 0.0f, -1.0f);
-  blueSphere.radius = 0.3f;
-  blueSphere.color = glm::vec3(0.2f, 0.2f, 0.8f);
-  blueSphere.materialIndex = 3;
-  gpuSpheres.push_back(blueSphere);
+  spheres.push_back(Sphere(glm::vec3(1.0f, 0.0f, -1.0f), 0.3f,
+                           glm::vec3(0.2f, 0.2f, 0.8f),
+                           blueMat)); // Blue sphere
 
-  GPUSphere groundSphere{};
-  groundSphere.center = glm::vec3(0.0f, -100.5f, -1.0f);
-  groundSphere.radius = 100.0f;
-  groundSphere.color = glm::vec3(0.8f, 0.8f, 0.2f);
-  groundSphere.materialIndex = 1;
-  gpuSpheres.push_back(groundSphere);
+  spheres.push_back(Sphere(glm::vec3(0.0f, -100.5f, -1.0f), 100.0f,
+                           glm::vec3(0.8f, 0.8f, 0.2f),
+                           yellowMat)); // Ground sphere
 
-  GPUSphere mirrorSphere{};
-  mirrorSphere.center = glm::vec3(0.5f, 0.3f, -0.5f);
-  mirrorSphere.radius = 0.2f;
-  mirrorSphere.color = glm::vec3(0.9f, 0.9f, 0.9f);
-  mirrorSphere.materialIndex = 4;
-  gpuSpheres.push_back(mirrorSphere);
+  spheres.push_back(Sphere(glm::vec3(0.5f, 0.3f, -0.5f), 0.2f,
+                           glm::vec3(0.9f, 0.9f, 0.9f),
+                           mirrorMat)); // Mirror sphere
 
-  GPUSphere yellowSphere{};
-  yellowSphere.center = glm::vec3(2.0f, 0.5f, 1.5f);
-  yellowSphere.radius = 1.0f;
-  yellowSphere.color = glm::vec3(0.8f, 0.8f, 0.2f);
-  yellowSphere.materialIndex = 1;
-  gpuSpheres.push_back(yellowSphere);
+  spheres.push_back(Sphere(glm::vec3(2.0f, 0.5f, 1.5f), 1.0f,
+                           glm::vec3(0.8f, 0.8f, 0.2f),
+                           yellowMat)); // Yellow sphere
 
-  // Light definitions
-  GPULight light1{};
-  light1.position = glm::vec3(2.0f, 2.0f, 1.0f);
-  light1.intensity = 1.0f;
-  light1.color = glm::vec3(1.0f, 0.9f, 0.8f);
-  gpuLights.push_back(light1);
+  // Light definitions using wrapper class
+  lights.push_back(Light(glm::vec3(2.0f, 2.0f, 1.0f), 1.0f,
+                         glm::vec3(1.0f, 0.9f, 0.8f))); // Warm light
 
-  GPULight light2{};
-  light2.position = glm::vec3(-2.0f, 1.0f, 0.0f);
-  light2.intensity = 1.0f;
-  light2.color = glm::vec3(0.3f, 0.5f, 1.0f);
-  gpuLights.push_back(light2);
+  lights.push_back(Light(glm::vec3(-2.0f, 1.0f, 0.0f), 1.0f,
+                         glm::vec3(0.3f, 0.5f, 1.0f))); // Cool light
 
-  GPULight light3{};
-  light3.position = glm::vec3(0.0f, -0.2f, 0.5f);
-  light3.intensity = 1.0f;
-  light3.color = glm::vec3(1.0f, 0.4f, 0.4f);
-  gpuLights.push_back(light3);
+  lights.push_back(Light(glm::vec3(0.0f, -0.2f, 0.5f), 1.0f,
+                         glm::vec3(1.0f, 0.4f, 0.4f))); // Red accent light
 
   // Load volumetric data (walnut)
   std::vector<uint8_t> volumeData;
@@ -244,25 +193,61 @@ int main(int argc, char *argv[]) {
   std::string rawPath = "volume/walnut.raw";
 
   if (loadVolumetricData(datPath, rawPath, volumeData, volumeResolution)) {
-    // Create GPU volumetric data structure
-    GPUVolumetricData volData{};
-    volData.position =
-        glm::vec3(1.5f, 1.0f, -0.5f); // Position where camera is looking
-    volData.scale = 0.001f;           // Scale factor
-    volData.v0 =
-        glm::vec3(0.0f, 0.0f, 0.0f); // Volume min corner (relative to position)
-    volData.v1 = glm::vec3(
-        2.0f, 2.0f, 2.0f); // Volume max corner (2-unit cube for visibility)
-    volData.resolution_x = volumeResolution.x;
-    volData.resolution_y = volumeResolution.y;
-    volData.resolution_z = volumeResolution.z;
-    volData.materialIndex = 5; // Index of volumetric material
-    gpuVolumes.push_back(volData);
+    // Create volumetric data using wrapper class with Material reference
+    VolumetricData volData(
+        glm::vec3(1.5f, 1.0f, -0.5f), // Position where camera is looking
+        0.001f,                       // Scale factor
+        glm::vec3(0.0f, 0.0f, 0.0f), // Volume min corner (relative to position)
+        glm::vec3(2.0f, 2.0f, 2.0f), // Volume max corner (2-unit cube)
+        volumeResolution,            // Resolution from file
+        volumetricMat);              // Material reference
+    volumes.push_back(volData);
     std::cout << "Volumetric data loaded and added to scene" << std::endl;
   } else {
     std::cerr << "Warning: Failed to load volumetric data, continuing without "
                  "volume"
               << std::endl;
+  }
+
+  // Pre-render: Build material list and map object materials to indices
+  std::vector<Material> materials;
+  SceneManager::prepareForRender(materials, spheres, volumes);
+
+  std::cout << "Pre-render complete: " << materials.size()
+            << " unique materials collected" << std::endl;
+  std::cout << "Sphere material indices: ";
+  for (const auto &sphere : spheres) {
+    std::cout << sphere.getMaterialIndex() << " ";
+  }
+  std::cout << std::endl;
+  if (!volumes.empty()) {
+    std::cout << "Volume material indices: ";
+    for (const auto &volume : volumes) {
+      std::cout << volume.getMaterialIndex() << " ";
+    }
+    std::cout << std::endl;
+  }
+
+  // Convert wrapper objects to GPU format
+  std::vector<GPUSphere> gpuSpheres;
+  std::vector<GPUMaterial> gpuMaterials;
+  std::vector<GPULight> gpuLights;
+  std::vector<GPUVolumetricData> gpuVolumes;
+
+  for (const auto &sphere : spheres) {
+    gpuSpheres.push_back(sphere.toGPU());
+  }
+
+  for (const auto &material : materials) {
+    gpuMaterials.push_back(material.toGPU());
+  }
+
+  for (const auto &light : lights) {
+    gpuLights.push_back(light.toGPU());
+  }
+
+  for (const auto &volume : volumes) {
+    gpuVolumes.push_back(volume.toGPU());
   }
 
   // Update scene in GPU

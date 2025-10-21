@@ -30,6 +30,7 @@ set(SOURCES
     src/Volumetric.cpp
     src/VulkanRenderer.cpp
     src/ShaderCompiler.cpp
+    src/SceneWrappers.cpp
 )
 
 # Header files
@@ -44,6 +45,7 @@ set(HEADERS
     include/Volumetric.h
     include/VulkanRenderer.h
     include/ShaderCompiler.h
+    include/SceneWrappers.h
 )
 
 # Create executable
