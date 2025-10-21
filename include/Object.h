@@ -12,6 +12,9 @@ struct HitRecord
     Vec3 normal;        // Surface normal at intersection
     double t;           // Ray parameter at intersection
     Material *material; // Material of the object
+    bool volumetricHit; // Whether the hit is inside a volumetric object
+    double density;     // Density at the hit point (for volumetric materials)
+    void *objectPtr;    // Pointer to the hit object for additional queries
 };
 
 class Object
