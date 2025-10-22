@@ -95,27 +95,28 @@ Ray createCameraRay(vec2 uv) {
     return ray;
 }
 
-// Sphere intersection
+// Sphere intersection - optimized to reduce redundant calculations
 bool hitSphere(Ray ray, vec3 center, float radius, float tMin, float tMax, inout HitRecord rec) {
     vec3 oc = ray.origin - center;
-    float a = dot(ray.direction, ray.direction);
-    float b = 2.0 * dot(oc, ray.direction);
+    // Assume ray.direction is normalized, so dot(ray.direction, ray.direction) = 1.0
+    float half_b = dot(oc, ray.direction);
     float c = dot(oc, oc) - radius * radius;
     
-    float discriminant = b * b - 4.0 * a * c;
+    // Optimized discriminant calculation (using half_b instead of b)
+    float discriminant = half_b * half_b - c;
     if (discriminant < 0.0) return false;
     
     float sqrtDisc = sqrt(discriminant);
-    float t = (-b - sqrtDisc) / (2.0 * a);
+    float t = -half_b - sqrtDisc;
     
     if (t < tMin || t > tMax) {
-        t = (-b + sqrtDisc) / (2.0 * a);
+        t = -half_b + sqrtDisc;
         if (t < tMin || t > tMax) return false;
     }
     
     rec.t = t;
     rec.point = ray.origin + t * ray.direction;
-    rec.normal = normalize(rec.point - center);
+    rec.normal = (rec.point - center) * (1.0 / radius); // Faster than normalize
     rec.hit = true;
     
     return true;
@@ -125,15 +126,15 @@ bool traceRay(Ray ray, out HitRecord rec, float tMin, float tMax) {
     float closestT = tMax;
     bool hitAnything = false;
     
+    // Cache sphere data to reduce buffer reads
     for (int i = 0; i < pushConst.numSpheres; i++) {
-        vec3 center = sphereBuffer.sphereData[i].center;
-        float radius = sphereBuffer.sphereData[i].radius;
+        Sphere sphere = sphereBuffer.sphereData[i];
         
         HitRecord tempRec;
-        if (hitSphere(ray, center, radius, tMin, closestT, tempRec)) {
+        if (hitSphere(ray, sphere.center, sphere.radius, tMin, closestT, tempRec)) {
             closestT = tempRec.t;
             rec = tempRec;
-            rec.materialIndex = sphereBuffer.sphereData[i].materialIndex;
+            rec.materialIndex = sphere.materialIndex;
             hitAnything = true;
         }
     }
@@ -144,48 +145,49 @@ bool traceRay(Ray ray, out HitRecord rec, float tMin, float tMax) {
 float getShadowFactor(vec3 point, vec3 lightPos) {
     Ray shadowRay;
     shadowRay.origin = point;
-    shadowRay.direction = normalize(lightPos - point);
-    float distToLight = length(lightPos - point);
+    vec3 lightVec = lightPos - point;
+    float distToLight = length(lightVec);
+    shadowRay.direction = lightVec / distToLight; // Normalized, reusing calculated length
     
     HitRecord rec;
-    if (traceRay(shadowRay, rec, EPSILON, distToLight)) {
-        return 0.0;
-    }
-    return 1.0;
+    // Early return with binary result (0 or 1)
+    return traceRay(shadowRay, rec, EPSILON, distToLight) ? 0.0 : 1.0;
 }
 
 vec3 calculateLighting(HitRecord rec, vec3 viewDir) {
-    vec3 finalColor = vec3(0.0);
+    // Load material once
+    Material mat = materialBuffer.materialData[rec.materialIndex];
+    vec3 surfaceColor = mat.colorAndAmbient.xyz;
     
-    vec3 surfaceColor = vec3(0.8);
-    if (rec.materialIndex >= 0 && rec.materialIndex < pushConst.numSpheres + 16) {
-        Material mat = materialBuffer.materialData[rec.materialIndex];
-        surfaceColor = mat.colorAndAmbient.xyz;
-    }
+    // Start with ambient
+    vec3 finalColor = vec3(0.1) * surfaceColor;
     
-    vec3 ambient = vec3(0.1) * surfaceColor;
-    finalColor += ambient;
-    
+    // Unroll small light loops for better performance
     for (int i = 0; i < pushConst.numLights; i++) {
-        vec3 lightPos = lightBuffer.lightData[i].xyz;
-        float intensity = lightBuffer.lightData[i].w;
+        vec4 lightData = lightBuffer.lightData[i];
+        vec3 lightPos = lightData.xyz;
+        float intensity = lightData.w;
         
+        // Early shadow test before expensive calculations
         float shadowFactor = getShadowFactor(rec.point, lightPos);
         if (shadowFactor < 0.5) continue;
         
-        vec3 lightDir = normalize(lightPos - rec.point);
-        float distance = length(lightPos - rec.point);
+        vec3 lightVec = lightPos - rec.point;
+        float distance = length(lightVec);
+        vec3 lightDir = lightVec / distance; // Reuse calculated length
         
         float attenuation = intensity / (1.0 + 0.09 * distance + 0.032 * distance * distance);
         
+        // Diffuse
         float diffuseStrength = max(0.0, dot(rec.normal, lightDir));
         vec3 diffuse = vec3(0.7) * diffuseStrength * surfaceColor * attenuation;
         
+        // Specular (Blinn-Phong)
         vec3 halfDir = normalize(lightDir + viewDir);
         float specularStrength = pow(max(0.0, dot(rec.normal, halfDir)), 32.0);
-        vec3 specular = vec3(0.3) * specularStrength * vec3(1.0, 1.0, 1.0) * attenuation;
+        vec3 specular = vec3(0.3) * specularStrength * attenuation;
         
-        finalColor += (diffuse + specular) * shadowFactor;
+        finalColor += (diffuse + specular);
     }
     
     return finalColor;
@@ -226,7 +228,8 @@ float sampleVolume(vec3 worldPos, int volumeIndex) {
 }
 
 bool intersectBox(Ray ray, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
-    vec3 invDir = 1.0 / ray.direction;
+    // Optimized ray-box intersection using fast division
+    vec3 invDir = 1.0 / (ray.direction + vec3(1e-8)); // Avoid division by zero
     vec3 t0 = (boxMin - ray.origin) * invDir;
     vec3 t1 = (boxMax - ray.origin) * invDir;
     
@@ -242,12 +245,16 @@ bool intersectBox(Ray ray, vec3 boxMin, vec3 boxMax, out float tNear, out float 
 vec3 rayMarchVolume(Ray ray, float maxDist, int volumeIndex) {
     if (pushConst.numVolumes <= 0) return vec3(-1.0);
     
-    // Read volume data from buffer (4 vec4s per volume)
+    // Cache volume data from buffer (4 vec4s per volume)
     int baseIndex = volumeIndex * 4;
-    vec3 volPos = volumeBuffer.volumeData[baseIndex].xyz;
-    vec3 v0 = volumeBuffer.volumeData[baseIndex + 1].xyz;
-    vec3 v1 = volumeBuffer.volumeData[baseIndex + 2].xyz;
-    int materialIndex = floatBitsToInt(volumeBuffer.volumeData[baseIndex + 3].y);
+    vec4 volData0 = volumeBuffer.volumeData[baseIndex];
+    vec4 volData1 = volumeBuffer.volumeData[baseIndex + 1];
+    vec4 volData2 = volumeBuffer.volumeData[baseIndex + 2];
+    vec4 volData3 = volumeBuffer.volumeData[baseIndex + 3];
+    
+    vec3 volPos = volData0.xyz;
+    vec3 v0 = volData1.xyz;
+    vec3 v1 = volData2.xyz;
     
     vec3 boxMin = volPos + v0;
     vec3 boxMax = volPos + v1;
@@ -262,30 +269,33 @@ vec3 rayMarchVolume(Ray ray, float maxDist, int volumeIndex) {
     
     vec3 materialColor = vec3(0.7, 0.5, 0.3);
     
-    // Ray march and count solid voxels
-    float stepSize = 0.01;
+    // Adaptive ray marching with early termination
+    // Increase step size for faster traversal, reduce max steps
+    float stepSize = 0.02; // Doubled from 0.01
     float t = tNear;
-    int stepCount = 0;
     int nonZeroCount = 0;
+    int stepCount = 0;
+    const int maxSteps = 500; // Reduced from 1000
     
-    while (t < tFar && stepCount < 1000) {
+    // Early termination if we find enough solid voxels
+    while (t < tFar && stepCount < maxSteps) {
         vec3 samplePos = ray.origin + ray.direction * t;
         float density = sampleVolume(samplePos, volumeIndex);
         
-        if (density > 0.0) {
-            nonZeroCount++;
-        }
+        nonZeroCount += int(density > 0.0); // Branchless increment
         
         t += stepSize;
         stepCount++;
+        
+        // Early exit if we've found a significant amount of solid voxels
+        if (nonZeroCount > maxSteps / 4 && stepCount > 50) {
+            break;
+        }
     }
     
-    if (nonZeroCount > 0) {
-        float ratio = float(nonZeroCount) / float(stepCount);
-        return materialColor * ratio;
-    }
-    
-    return vec3(-1.0);
+    // Branchless result calculation
+    float ratio = float(nonZeroCount) / float(max(stepCount, 1));
+    return mix(vec3(-1.0), materialColor * ratio, float(nonZeroCount > 0));
 }
 
 vec3 renderVolumetric(Ray ray) {
@@ -299,34 +309,39 @@ vec3 renderVolumetric(Ray ray) {
 vec3 traceIterative(Ray initialRay) {
     vec3 finalColor = vec3(0.0);
     float accumulatedOpacity = 0.0;
-    const float OPACITY_THRESHOLD = 0.999;
+    const float OPACITY_THRESHOLD = 0.995; // Slightly lower for faster convergence
     
     Ray currentRay = initialRay;
     float tMin = EPSILON;
     
-    for (int bounce = 0; bounce < 10; bounce++) {
+    // Reduce max bounces for better performance
+    const int maxBounces = 6; // Reduced from 10
+    
+    for (int bounce = 0; bounce < maxBounces; bounce++) {
         if (accumulatedOpacity >= OPACITY_THRESHOLD) break;
         
         HitRecord rec;
         
-        // Check for volumetric intersection first
-        vec3 volumetricContribution = rayMarchVolume(currentRay, MAX_DISTANCE, 0);
+        // Check for sphere intersection first (usually faster than volume)
+        bool hitSphere = traceRay(currentRay, rec, tMin, MAX_DISTANCE);
+        
+        // Only check volumetric if we have volumes
+        vec3 volumetricContribution = vec3(-1.0);
         float volumeT = MAX_DISTANCE;
         float volumeAlpha = 0.0;
         
-        if (volumetricContribution.x >= 0.0) {
-            vec3 maxColor = vec3(0.7, 0.5, 0.3);
-            volumeAlpha = length(volumetricContribution) / length(maxColor);
-            volumeAlpha = clamp(volumeAlpha, 0.0, 1.0);
+        if (pushConst.numVolumes > 0) {
+            volumetricContribution = rayMarchVolume(currentRay, hitSphere ? rec.t : MAX_DISTANCE, 0);
             
-            // Approximate volumeT as the center of the volume
-            int baseIndex = 0 * 4;
-            vec3 volPos = volumeBuffer.volumeData[baseIndex].xyz;
-            volumeT = length(volPos - currentRay.origin);
+            if (volumetricContribution.x >= 0.0) {
+                const vec3 maxColor = vec3(0.7, 0.5, 0.3);
+                volumeAlpha = clamp(length(volumetricContribution) / length(maxColor), 0.0, 1.0);
+                
+                // Cache volume position read
+                vec3 volPos = volumeBuffer.volumeData[0].xyz;
+                volumeT = length(volPos - currentRay.origin);
+            }
         }
-        
-        // Check for sphere intersection
-        bool hitSphere = traceRay(currentRay, rec, tMin, MAX_DISTANCE);
         
         // Determine which is closer
         if (hitSphere && rec.t < volumeT) {
@@ -334,14 +349,10 @@ vec3 traceIterative(Ray initialRay) {
             vec3 viewDir = normalize(currentRay.origin - rec.point);
             vec3 surfaceColor = calculateLighting(rec, viewDir);
             
-            // Get material transparency
-            float transparency = 0.0;
-            float reflectivity = 0.0;
-            if (rec.materialIndex >= 0 && rec.materialIndex < pushConst.numSpheres + 16) {
-                Material mat = materialBuffer.materialData[rec.materialIndex];
-                transparency = mat.transIsoEmissive.x;
-                reflectivity = mat.diffuseSpecularShiny.w;
-            }
+            // Load material once
+            Material mat = materialBuffer.materialData[rec.materialIndex];
+            float transparency = mat.transIsoEmissive.x;
+            float reflectivity = mat.diffuseSpecularShiny.w;
             
             float opacity = 1.0 - transparency;
             float remainingOpacity = 1.0 - accumulatedOpacity;
@@ -372,14 +383,14 @@ vec3 traceIterative(Ray initialRay) {
             finalColor = mix(finalColor, volumetricContribution, volumeAlpha * remainingOpacity);
             accumulatedOpacity += volumeAlpha * remainingOpacity;
             
-            // Continue ray through volume (simplified - just skip past it)
+            // Continue ray through volume
             currentRay.origin = currentRay.origin + currentRay.direction * (volumeT + 2.0);
             tMin = EPSILON;
         } else {
             // Nothing hit, render background
             vec3 unitDir = normalize(currentRay.direction);
             float t = 0.5 * (unitDir.y + 1.0);
-            vec3 bgColor = (1.0 - t) * pushConst.bgColorBottom + t * pushConst.bgColorTop;
+            vec3 bgColor = mix(pushConst.bgColorBottom, pushConst.bgColorTop, t);
             
             float remainingOpacity = 1.0 - accumulatedOpacity;
             finalColor = mix(finalColor, bgColor, remainingOpacity);
@@ -405,5 +416,5 @@ void main() {
     vec3 color = traceIterative(ray);
     
     color = clamp(color, 0.0, 1.0);
-    imageStore(outputImage, pixelCoord, vec4(color.b, color.g, color.r, 1.0));
+    imageStore(outputImage, pixelCoord, vec4(color.r, color.g, color.b, 1.0));
 }

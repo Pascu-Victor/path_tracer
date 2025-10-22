@@ -31,10 +31,10 @@ std::string ShaderCompiler::getShaderStageName(VkShaderStageFlagBits stage) {
 
 std::vector<uint32_t>
 ShaderCompiler::compileWithGlslc(const std::string &shaderPath) {
-  // Compile GLSL to SPIR-V using glslc
+  // Compile GLSL to SPIR-V using glslc with optimization
   std::string outputPath = shaderPath + ".spv";
   std::string command =
-      std::string("glslc ") + shaderPath + " -o " + outputPath;
+      std::string("glslc ") + shaderPath + " -o " + outputPath + " -O";
 
   std::cout << "Compiling shader: " << command << std::endl;
 

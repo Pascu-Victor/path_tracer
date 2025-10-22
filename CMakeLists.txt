@@ -51,7 +51,7 @@ set(HEADERS
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
-target_compile_options(${PROJECT_NAME} PRIVATE -ffast-math -flto -O3)
+target_compile_options(${PROJECT_NAME} PRIVATE -ffast-math -flto -O3 -g)
 
 target_link_options(${PROJECT_NAME} PRIVATE -flto)
 

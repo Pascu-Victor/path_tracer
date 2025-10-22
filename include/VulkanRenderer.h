@@ -81,8 +81,6 @@ public:
   void present();
 
   bool readbackOutputImage(std::vector<uint32_t> &imageData);
-  bool initializeSDLRenderer(SDL_Window *window);
-  bool updateSDLDisplay();
   bool saveFrameToPPM(const std::string &filename);
 
   VkImage getOutputImage() const { return vkOutputImage; }
@@ -99,6 +97,7 @@ private:
 
   void recordComputeCommands(const PushConstants &pushConstants);
   void submitAndPresent();
+  bool blitToSwapchain();
 
   // Vulkan core
   VkInstance vkInstance = VK_NULL_HANDLE;
@@ -106,7 +105,12 @@ private:
   VkDevice vkDevice = VK_NULL_HANDLE;
   VkQueue vkComputeQueue = VK_NULL_HANDLE;
   VkCommandPool vkCommandPool = VK_NULL_HANDLE;
-  VkCommandBuffer vkCommandBuffer = VK_NULL_HANDLE;
+
+  // Multiple command buffers for frames in flight
+  static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+  VkCommandBuffer vkCommandBuffers[MAX_FRAMES_IN_FLIGHT];
+  VkFence vkInFlightFences[MAX_FRAMES_IN_FLIGHT];
+  uint32_t currentFrame = 0;
 
   // Compute pipeline
   VkPipelineLayout vkPipelineLayout = VK_NULL_HANDLE;
@@ -139,11 +143,18 @@ private:
   int windowWidth = 800;
   int windowHeight = 600;
 
-  // SDL for presentation
-  SDL_Renderer *sdlRenderer = nullptr;
-  SDL_Texture *sdlTexture = nullptr;
+  // Swapchain for direct presentation
+  VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
+  VkSwapchainKHR vkSwapchain = VK_NULL_HANDLE;
+  std::vector<VkImage> vkSwapchainImages;
+  std::vector<VkImageView> vkSwapchainImageViews;
+  VkFormat vkSwapchainImageFormat;
+  VkExtent2D vkSwapchainExtent;
+  std::vector<VkSemaphore> vkImageAvailableSemaphores;
+  std::vector<VkSemaphore> vkRenderFinishedSemaphores;
+  uint32_t currentImageIndex = 0;
 
-  // Readback buffer for GPU to CPU transfer
+  // Readback buffer for GPU to CPU transfer (only for PPM export)
   VkBuffer vkReadbackBuffer = VK_NULL_HANDLE;
   VkDeviceMemory vkReadbackBufferMemory = VK_NULL_HANDLE;
 

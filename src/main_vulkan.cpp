@@ -4,7 +4,9 @@
 #include "VulkanRenderer.h"
 
 #include <SDL3/SDL.h>
+#include <algorithm>
 #include <cmath>
+#include <execution>
 #include <fstream>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -102,10 +104,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Initialize SDL renderer and texture for display
-  if (window && !vulkanRenderer.initializeSDLRenderer(window)) {
-    std::cerr << "SDL renderer initialization failed" << std::endl;
-  }
+  // Initialize SDL renderer and texture for display (no longer needed with
+  // direct Vulkan rendering) SDL now acts as a window provider only - Vulkan
+  // handles all rendering
 
   // Setup camera
   double aspectRatio = static_cast<double>(WINDOW_WIDTH) / WINDOW_HEIGHT;
@@ -228,27 +229,31 @@ int main(int argc, char *argv[]) {
     std::cout << std::endl;
   }
 
-  // Convert wrapper objects to GPU format
-  std::vector<GPUSphere> gpuSpheres;
-  std::vector<GPUMaterial> gpuMaterials;
-  std::vector<GPULight> gpuLights;
-  std::vector<GPUVolumetricData> gpuVolumes;
+  // Convert wrapper objects to GPU format (parallelize conversions)
+  std::vector<GPUSphere> gpuSpheres(spheres.size());
+  std::vector<GPUMaterial> gpuMaterials(materials.size());
+  std::vector<GPULight> gpuLights(lights.size());
+  std::vector<GPUVolumetricData> gpuVolumes(volumes.size());
 
-  for (const auto &sphere : spheres) {
-    gpuSpheres.push_back(sphere.toGPU());
-  }
+  // Parallel transform for spheres
+  std::transform(std::execution::par_unseq, spheres.begin(), spheres.end(),
+                 gpuSpheres.begin(),
+                 [](const Sphere &sphere) { return sphere.toGPU(); });
 
-  for (const auto &material : materials) {
-    gpuMaterials.push_back(material.toGPU());
-  }
+  // Parallel transform for materials
+  std::transform(std::execution::par_unseq, materials.begin(), materials.end(),
+                 gpuMaterials.begin(),
+                 [](const Material &material) { return material.toGPU(); });
 
-  for (const auto &light : lights) {
-    gpuLights.push_back(light.toGPU());
-  }
+  // Parallel transform for lights
+  std::transform(std::execution::par_unseq, lights.begin(), lights.end(),
+                 gpuLights.begin(),
+                 [](const Light &light) { return light.toGPU(); });
 
-  for (const auto &volume : volumes) {
-    gpuVolumes.push_back(volume.toGPU());
-  }
+  // Parallel transform for volumes
+  std::transform(std::execution::par_unseq, volumes.begin(), volumes.end(),
+                 gpuVolumes.begin(),
+                 [](const VolumetricData &volume) { return volume.toGPU(); });
 
   // Update scene in GPU
   vulkanRenderer.updateScene(gpuSpheres, gpuMaterials, gpuLights, gpuVolumes,
@@ -314,22 +319,15 @@ int main(int argc, char *argv[]) {
     pushConst.numVolumes = static_cast<int>(gpuVolumes.size());
     pushConst.maxDepth = MAX_DEPTH;
     // Background gradient colors
-    pushConst.bgColorBottom = glm::vec3(.0f, .0f, .0f); // White
-    pushConst.bgColorTop = glm::vec3(0.0f, 0.0f, .0f);  // Sky blue
+    pushConst.bgColorBottom = glm::vec3(1.0f, 1.0f, 1.0f); // White
+    pushConst.bgColorTop = glm::vec3(0.4f, 0.45f, 1.0f);   // Sky blue
 
     vulkanRenderer.render(pushConst);
-
-    // Update SDL display with GPU-rendered content
-    // Only update display every 3 frames to reduce GPU-CPU readback overhead
-    if (window && frameCount % 3 == 0) {
-      vulkanRenderer.updateSDLDisplay();
-    }
 
     vulkanRenderer.present();
 
     frameCount++;
     time += deltaTime;
-    // Let GPU run at full speed - no artificial delay
   }
 
   // Cleanup

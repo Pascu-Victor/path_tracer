@@ -3,3 +3,9 @@ build/
 
 #cache
 .cache/
+
+#tools
+RadeonDeveloperToolSuite-*/
+
+#built shaders
+*.spv
