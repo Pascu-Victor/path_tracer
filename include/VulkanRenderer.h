@@ -13,8 +13,7 @@
 class VulkanDevice;
 
 // GPU-friendly scene data structures
-struct GPUSphere
-{
+struct GPUSphere {
   glm::vec3 center;
   float radius;
   glm::vec3 color;
@@ -23,8 +22,7 @@ struct GPUSphere
 
 // GPUEllipsoid is defined in Ellipsoid.h
 
-struct GPUMaterial
-{
+struct GPUMaterial {
   glm::vec4 colorAndAmbient;      // color.xyz, ambient.w
   glm::vec4 diffuseSpecularShiny; // diffuse.x, specular.y, shininess.z,
                                   // reflectivity.w
@@ -34,16 +32,14 @@ struct GPUMaterial
   glm::vec4 scatterAndAbsorption; // scatterColor.xyz, absorptionCoeff.w
 };
 
-struct GPULight
-{
+struct GPULight {
   glm::vec3 position;
   float intensity;
   glm::vec3 color;
   float padding;
 };
 
-struct GPUVolumetricData
-{
+struct GPUVolumetricData {
   glm::vec3 position;
   float scale;
   glm::vec3 v0;
@@ -56,8 +52,7 @@ struct GPUVolumetricData
 };
 
 // Push constants for shader
-struct PushConstants
-{
+struct PushConstants {
   glm::mat4 cameraMatrix;  // offset 0, size 64
   glm::vec3 cameraPos;     // offset 64, size 12
   float time;              // offset 76, size 4
@@ -75,8 +70,7 @@ struct PushConstants
   float padding5;          // offset 140, size 4
 };
 
-class VulkanRenderer
-{
+class VulkanRenderer {
 public:
   VulkanRenderer();
   ~VulkanRenderer();
@@ -98,8 +92,7 @@ public:
   VkImage getOutputImage() const { return vkOutputImage; }
 
   // Get shader path to index mapping (populated after shader loading)
-  const std::unordered_map<std::string, int> &getShaderPathToIndexMap() const
-  {
+  const std::unordered_map<std::string, int> &getShaderPathToIndexMap() const {
     return shaderPathToIndex_;
   }
 
@@ -112,6 +105,12 @@ private:
   bool createDescriptorSets();
   bool createBuffers();
   bool createSwapChain(SDL_Window *window);
+
+  // Helpers
+  bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                    VkMemoryPropertyFlags properties, VkBuffer &buffer,
+                    VkDeviceMemory &memory);
+  bool copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 
   void recordComputeCommands(const PushConstants &pushConstants);
   bool blitToSwapchain();
@@ -180,6 +179,10 @@ private:
 
   VkPhysicalDeviceProperties deviceProperties;
   VkPhysicalDeviceMemoryProperties memoryProperties;
+
+  // Whether we should prefer DEVICE_LOCAL buffers and stage uploads (true on
+  // discrete GPUs)
+  bool useDeviceLocalBuffers = false;
 
   // Shader path to index mapping (populated during shader loading)
   std::unordered_map<std::string, int> shaderPathToIndex_;

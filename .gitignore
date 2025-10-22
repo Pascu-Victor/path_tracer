@@ -10,3 +10,4 @@ RadeonDeveloperToolSuite-*/
 #built shaders
 *.spv
 *.injected
+*.injected.comp
