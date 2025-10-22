@@ -37,7 +37,7 @@ layout(set = 0, binding = 2) readonly buffer EllipsoidBuf {
 struct Material {
     vec4 colorAndAmbient;      // color.xyz, ambient.w
     vec4 diffuseSpecularShiny; // diffuse.x, specular.y, shininess.z, reflectivity.w
-    vec4 transparencyEmissive; // transparency.x, emissiveStrength.y, padding.z, padding.w
+    vec4 transparencyEmissive; // transparency.x, emissiveStrength.y, shaderFunctionIndex.z, padding.w
     vec4 emissive;             // emissive.xyz, padding.w
     vec4 scatterAndAbsorption; // scatterColor.xyz, absorptionCoeff.w
 };
@@ -217,12 +217,43 @@ float getShadowFactor(vec3 point, vec3 lightPos) {
     shadowRay.origin = point;
     vec3 lightVec = lightPos - point;
     float distToLight = length(lightVec);
-    shadowRay.direction = lightVec / distToLight;
+    shadowRay.direction = lightVec / distToLight; // Normalized, reusing calculated length
     
     HitRecord rec;
-    // Early return? bool
+    // Early return with binary result (0 or 1)
     return traceRay(shadowRay, rec, EPSILON, distToLight) ? 0.0 : 1.0;
 }
+
+// Surface shader data structure - contains all data needed for custom shading
+struct SurfaceShaderData {
+    vec3 hitPoint;          // World space hit position
+    vec3 normal;            // Surface normal
+    vec3 viewDir;           // Direction to camera (normalized)
+    vec3 surfaceColor;      // Base material color
+    float ambient;          // Ambient coefficient
+    float diffuse;          // Diffuse coefficient
+    float specular;         // Specular coefficient
+    float shininess;        // Shininess exponent
+    float emissiveStrength; // Emissive strength
+    float time;             // Current time for animations
+    int materialIndex;      // Material index for additional data access
+};
+
+// Surface shader return structure
+struct SurfaceShaderResult {
+    vec3 color;             // Final surface color
+    vec3 emissive;          // Emissive contribution (added to color)
+    float emissiveStrength; // Emissive strength (for lighting other objects)
+    float ambient;          // Modified ambient coefficient
+    float diffuse;          // Modified diffuse coefficient
+    float specular;         // Modified specular coefficient
+    float shininess;        // Modified shininess
+};
+
+// Custom surface shader functions loaded from separate files
+// Shader 0: Phong (handled in calculateLighting)
+// SURFACE_SHADERS_PLACEHOLDER
+// This will be replaced at runtime with shader includes
 
 vec3 calculateLighting(HitRecord rec, vec3 viewDir) {
     // Load material once
@@ -233,6 +264,42 @@ vec3 calculateLighting(HitRecord rec, vec3 viewDir) {
     float specularCoeff = mat.diffuseSpecularShiny.y;
     float shininess = mat.diffuseSpecularShiny.z;
     float emissiveStrength = mat.transparencyEmissive.y;
+    int shaderFunctionIndex = int(mat.transparencyEmissive.z);
+    
+    // Check if using custom surface shader
+    if (shaderFunctionIndex != 0) {
+        SurfaceShaderData shaderData;
+        shaderData.hitPoint = rec.point;
+        shaderData.normal = rec.normal;
+        shaderData.viewDir = viewDir;
+        shaderData.surfaceColor = surfaceColor;
+        shaderData.ambient = ambient;
+        shaderData.diffuse = diffuseCoeff;
+        shaderData.specular = specularCoeff;
+        shaderData.shininess = shininess;
+        shaderData.emissiveStrength = emissiveStrength;
+        shaderData.time = pushConst.time;
+        shaderData.materialIndex = rec.materialIndex;
+        
+        // Dispatch to custom shader function (generated at compile time)
+        SurfaceShaderResult shaderResult;
+        shaderResult.color = vec3(0.0);
+        shaderResult.emissive = vec3(0.0);
+        shaderResult.emissiveStrength = emissiveStrength;
+        shaderResult.ambient = ambient;
+        shaderResult.diffuse = diffuseCoeff;
+        shaderResult.specular = specularCoeff;
+        shaderResult.shininess = shininess;
+        // SURFACE_SHADER_DISPATCH_PLACEHOLDER
+        
+        // Return combined color and emissive
+        return shaderResult.color + shaderResult.emissive;
+        
+        // Fallback to Phong if dispatch doesn't match
+        // (This shouldn't happen if shader loading worked correctly)
+    }
+    
+    // Default: Phong shading (shader function 0)
     
     // Start with ambient
     vec3 finalColor = ambient * surfaceColor;
@@ -275,12 +342,51 @@ vec3 calculateLighting(HitRecord rec, vec3 viewDir) {
         Sphere sphere = sphereBuffer.sphereData[i];
         Material sphereMat = materialBuffer.materialData[sphere.materialIndex];
         float sphereEmissive = sphereMat.transparencyEmissive.y;
-        
-        // DEBUG: Add blue tint for ANY sphere iteration
-        // finalColor += vec3(0.0, 0.0, 0.1);
+        int sphereShaderIndex = int(sphereMat.transparencyEmissive.z);
         
         if (sphereEmissive > 0.0) {
             vec3 emissiveColor = sphereMat.colorAndAmbient.xyz;
+            
+            // If the sphere uses a custom shader, evaluate it to get the emissive contribution
+            if (sphereShaderIndex != 0) {
+                // Create shader data for the sphere (approximating hit point at sphere center direction)
+                vec3 toSphere = sphere.center - rec.point;
+                float distToSphere = length(toSphere);
+                vec3 dirToSphere = toSphere / distToSphere;
+                vec3 approximateHitPoint = sphere.center - dirToSphere * sphere.radius;
+                vec3 approximateNormal = -dirToSphere;
+                
+                SurfaceShaderData sphereShaderData;
+                sphereShaderData.hitPoint = approximateHitPoint;
+                sphereShaderData.normal = approximateNormal;
+                sphereShaderData.viewDir = dirToSphere;
+                sphereShaderData.surfaceColor = sphereMat.colorAndAmbient.xyz;
+                sphereShaderData.ambient = sphereMat.colorAndAmbient.w;
+                sphereShaderData.diffuse = sphereMat.diffuseSpecularShiny.x;
+                sphereShaderData.specular = sphereMat.diffuseSpecularShiny.y;
+                sphereShaderData.shininess = sphereMat.diffuseSpecularShiny.z;
+                sphereShaderData.emissiveStrength = sphereEmissive;
+                sphereShaderData.time = pushConst.time;
+                sphereShaderData.materialIndex = sphere.materialIndex;
+                
+                SurfaceShaderResult sphereShaderResult;
+                sphereShaderResult.color = vec3(0.0);
+                sphereShaderResult.emissive = vec3(0.0);
+                sphereShaderResult.emissiveStrength = sphereEmissive;
+                sphereShaderResult.ambient = sphereMat.colorAndAmbient.w;
+                sphereShaderResult.diffuse = sphereMat.diffuseSpecularShiny.x;
+                sphereShaderResult.specular = sphereMat.diffuseSpecularShiny.y;
+                sphereShaderResult.shininess = sphereMat.diffuseSpecularShiny.z;
+                // SURFACE_SHADER_DISPATCH_FOR_SPHERE_EMISSIVE
+                
+                // Use the shader's emissive output and strength
+                emissiveColor = sphereShaderResult.emissive;
+                sphereEmissive = sphereShaderResult.emissiveStrength;
+                
+                // If shader returns zero emissive, skip this sphere
+                if (length(emissiveColor) < 0.001) continue;
+            }
+            
             vec3 toSphere = sphere.center - rec.point;
             float distToSphere = length(toSphere);
             vec3 dirToSphere = toSphere / distToSphere;

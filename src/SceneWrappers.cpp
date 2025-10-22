@@ -1,13 +1,30 @@
 #include "SceneWrappers.h"
 #include "VulkanRenderer.h"
+#include <iostream>
 
-GPUMaterial Material::toGPU() const noexcept {
+GPUMaterial Material::toGPU(const std::unordered_map<std::string, int>
+                                &shaderPathToIndex) const noexcept {
   GPUMaterial gpu{};
   gpu.colorAndAmbient = glm::vec4(data_.color, data_.ambient);
   gpu.diffuseSpecularShiny = glm::vec4(data_.diffuse, data_.specular,
                                        data_.shininess, data_.reflectivity);
+
+  // Resolve shader path to index
+  int shaderIndex = 0;
+  if (!shaderPath_.empty()) {
+    auto it = shaderPathToIndex.find(shaderPath_);
+    if (it != shaderPathToIndex.end()) {
+      shaderIndex = it->second;
+    } else {
+      for (const auto &[path, idx] : shaderPathToIndex) {
+        std::cout << "  '" << path << "' -> " << idx << std::endl;
+      }
+    }
+  }
+
   gpu.transparencyEmissive =
-      glm::vec4(data_.transparency, data_.emissiveStrength, 0.0f, 0.0f);
+      glm::vec4(data_.transparency, data_.emissiveStrength,
+                static_cast<float>(shaderIndex), 0.0f);
   gpu.emissive = glm::vec4(data_.emissive, 0.0f);
   gpu.scatterAndAbsorption =
       glm::vec4(data_.scatterColor, data_.absorptionCoeff);

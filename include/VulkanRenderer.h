@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -26,7 +27,7 @@ struct GPUMaterial {
   glm::vec4 diffuseSpecularShiny; // diffuse.x, specular.y, shininess.z,
                                   // reflectivity.w
   glm::vec4 transparencyEmissive; // transparency.x, emissiveStrength.y,
-                                  // padding.z, padding.w
+                                  // shaderFunctionIndex.z (as float), padding.w
   glm::vec4 emissive;             // emissive.xyz, padding.w
   glm::vec4 scatterAndAbsorption; // scatterColor.xyz, absorptionCoeff.w
 };
@@ -92,6 +93,11 @@ public:
   bool saveFrameToPPM(const std::string &filename);
 
   VkImage getOutputImage() const { return vkOutputImage; }
+
+  // Get shader path to index mapping (populated after shader loading)
+  const std::unordered_map<std::string, int> &getShaderPathToIndexMap() const {
+    return shaderPathToIndex_;
+  }
 
 private:
   bool createInstance();
@@ -171,6 +177,9 @@ private:
 
   VkPhysicalDeviceProperties deviceProperties;
   VkPhysicalDeviceMemoryProperties memoryProperties;
+
+  // Shader path to index mapping (populated during shader loading)
+  std::unordered_map<std::string, int> shaderPathToIndex_;
 };
 
 #endif // VULKAN_RENDERER_H

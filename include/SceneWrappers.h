@@ -2,6 +2,7 @@
 #define SCENE_WRAPPERS_H
 
 #include <glm/glm.hpp>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -24,6 +25,7 @@ public:
               .reflectivity = 0.0f,
               .transparency = 0.0f,
               .emissiveStrength = 0.0f,
+              .shaderFunctionIndex = 0,
               .emissive = glm::vec3(0.0f),
               .scatterColor = glm::vec3(0.0f),
               .absorptionCoeff = 0.0f} {}
@@ -81,6 +83,19 @@ public:
     return mat;
   }
 
+  // Custom surface shader material
+  static Material CustomShader(const glm::vec3 &color,
+                               const std::string &shaderPath) noexcept {
+    Material mat;
+    mat.setColor(color);
+    mat.setAmbient(0.1f);
+    mat.setDiffuse(0.7f);
+    mat.setSpecular(0.3f);
+    mat.setShininess(32.0f);
+    mat.setShaderPath(shaderPath);
+    return mat;
+  }
+
   // Accessors
   constexpr glm::vec3 getColor() const noexcept { return data_.color; }
   constexpr float getAmbient() const noexcept { return data_.ambient; }
@@ -103,6 +118,7 @@ public:
   constexpr float getAbsorptionCoeff() const noexcept {
     return data_.absorptionCoeff;
   }
+  const std::string &getShaderPath() const noexcept { return shaderPath_; }
 
   // Mutators
   constexpr void setColor(const glm::vec3 &color) noexcept {
@@ -134,9 +150,11 @@ public:
   constexpr void setAbsorptionCoeff(float coeff) noexcept {
     data_.absorptionCoeff = coeff;
   }
+  void setShaderPath(const std::string &path) noexcept { shaderPath_ = path; }
 
-  // Convert to GPU format
-  GPUMaterial toGPU() const noexcept;
+  // Convert to GPU format (requires shader path to index mapping)
+  GPUMaterial toGPU(const std::unordered_map<std::string, int>
+                        &shaderPathToIndex) const noexcept;
 
 private:
   // Union for transparent access to packed data
@@ -150,7 +168,8 @@ private:
       float reflectivity;
       float transparency;
       float emissiveStrength;
-      float padding1;
+      int shaderFunctionIndex; // Computed from shaderPath_ at GPU conversion
+                               // time
       float padding2;
       glm::vec3 emissive;
       float padding3;
@@ -158,6 +177,8 @@ private:
       float absorptionCoeff;
     } data_;
   };
+
+  std::string shaderPath_; // Path to custom surface shader (empty = use Phong)
 };
 
 // Sphere wrapper class

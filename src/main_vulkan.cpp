@@ -140,10 +140,14 @@ int main(int argc, char *argv[]) {
   // Green emissive material
   Material greenMat = Material::Emissive(glm::vec3(0.2f, 0.8f, 0.2f), 2.0f);
 
-  // Blue semi-glossy material
-  Material blueMat = Material::Diffuse(glm::vec3(0.2f, 0.2f, 0.8f), 0.7f, 0.1f);
+  // Blue sphere with rainbow shader
+  Material blueMat = Material::CustomShader(
+      glm::vec3(0.2f, 0.2f, 0.8f), "shaders/surface_shaders/rainbow.glsl");
+  blueMat.setDiffuse(0.7f);
+  blueMat.setAmbient(0.1f);
   blueMat.setSpecular(0.5f);
   blueMat.setShininess(64.0f);
+  blueMat.setEmissiveStrength(1.0f); // Enable emissive so shader can control it
 
   // Mirror material
   Material mirrorMat = Material::Mirror(glm::vec3(0.9f, 0.9f, 0.9f), 0.9f);
@@ -188,13 +192,13 @@ int main(int argc, char *argv[]) {
                                  blueMat));                   // Blue material
 
   // Light definitions using wrapper class
-  lights.push_back(Light(glm::vec3(2.0f, 2.0f, 1.0f), 1.0f,
+  lights.push_back(Light(glm::vec3(2.0f, 2.0f, 1.0f), 0.5f,
                          glm::vec3(1.0f, 0.9f, 0.8f))); // Warm light
 
-  lights.push_back(Light(glm::vec3(-2.0f, 1.0f, 0.0f), 1.0f,
+  lights.push_back(Light(glm::vec3(-2.0f, 1.0f, 0.0f), 0.5f,
                          glm::vec3(0.3f, 0.5f, 1.0f))); // Cool light
 
-  lights.push_back(Light(glm::vec3(0.0f, -0.2f, 0.5f), 1.0f,
+  lights.push_back(Light(glm::vec3(0.0f, -0.2f, 0.5f), 0.5f,
                          glm::vec3(1.0f, 0.4f, 0.4f))); // Red accent light
 
   // Load volumetric data (walnut)
@@ -260,10 +264,15 @@ int main(int argc, char *argv[]) {
                  ellipsoids.end(), gpuEllipsoids.begin(),
                  [](const Ellipsoid &ellipsoid) { return ellipsoid.toGPU(); });
 
+  // Get shader path to index mapping from renderer
+  const auto &shaderPathToIndex = vulkanRenderer.getShaderPathToIndexMap();
+
   // Parallel transform for materials
   std::transform(std::execution::par_unseq, materials.begin(), materials.end(),
                  gpuMaterials.begin(),
-                 [](const Material &material) { return material.toGPU(); });
+                 [&shaderPathToIndex](const Material &material) {
+                   return material.toGPU(shaderPathToIndex);
+                 });
 
   // Parallel transform for lights
   std::transform(std::execution::par_unseq, lights.begin(), lights.end(),

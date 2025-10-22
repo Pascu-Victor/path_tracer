@@ -507,10 +507,30 @@ bool VulkanRenderer::createDescriptorSets() {
 }
 
 bool VulkanRenderer::createComputePipeline() {
+  // Load main shader with injected surface shaders
+  std::string modifiedShaderSource;
+  try {
+    modifiedShaderSource = ShaderCompiler::loadAndInjectSurfaceShaders(
+        "shaders/raytrace.comp", "shaders/surface_shaders", shaderPathToIndex_);
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to load surface shaders: " << e.what() << std::endl;
+    return false;
+  }
+
+  // Write modified shader to temp file
+  const std::string tempShaderPath = "shaders/raytrace.injected.comp";
+  std::ofstream tempFile(tempShaderPath);
+  if (!tempFile.is_open()) {
+    std::cerr << "Failed to write temporary shader file" << std::endl;
+    return false;
+  }
+  tempFile << modifiedShaderSource;
+  tempFile.close();
+
   // Compile shader
   std::vector<uint32_t> shaderCode;
   try {
-    shaderCode = ShaderCompiler::compileShader("shaders/raytrace.comp",
+    shaderCode = ShaderCompiler::compileShader(tempShaderPath,
                                                VK_SHADER_STAGE_COMPUTE_BIT);
   } catch (const std::exception &e) {
     std::cerr << "Shader compilation failed: " << e.what() << std::endl;
