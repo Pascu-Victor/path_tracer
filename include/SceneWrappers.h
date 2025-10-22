@@ -23,7 +23,6 @@ public:
               .shininess = 32.0f,
               .reflectivity = 0.0f,
               .transparency = 0.0f,
-              .isVolumetric = 0.0f,
               .emissiveStrength = 0.0f,
               .emissive = glm::vec3(0.0f),
               .scatterColor = glm::vec3(0.0f),
@@ -67,16 +66,17 @@ public:
   static constexpr Material Volumetric(const glm::vec3 &scatterColor,
                                        float absorptionCoeff) noexcept {
     Material mat;
-    mat.setVolumetric(true);
     mat.setScatterColor(scatterColor);
     mat.setAbsorptionCoeff(absorptionCoeff);
     return mat;
   }
 
-  static constexpr Material Emissive(const glm::vec3 &emissiveColor,
+  static constexpr Material Emissive(const glm::vec3 &color,
                                      float strength = 1.0f) noexcept {
     Material mat;
-    mat.setEmissive(emissiveColor);
+    mat.setColor(color);
+    mat.setAmbient(0.0f); // Emissive objects don't need ambient
+    mat.setDiffuse(0.0f); // Emissive objects don't receive diffuse lighting
     mat.setEmissiveStrength(strength);
     return mat;
   }
@@ -92,9 +92,6 @@ public:
   }
   constexpr float getTransparency() const noexcept {
     return data_.transparency;
-  }
-  constexpr bool isVolumetric() const noexcept {
-    return data_.isVolumetric > 0.5f;
   }
   constexpr float getEmissiveStrength() const noexcept {
     return data_.emissiveStrength;
@@ -125,9 +122,6 @@ public:
   constexpr void setTransparency(float transparency) noexcept {
     data_.transparency = transparency;
   }
-  constexpr void setVolumetric(bool volumetric) noexcept {
-    data_.isVolumetric = volumetric ? 1.0f : 0.0f;
-  }
   constexpr void setEmissiveStrength(float strength) noexcept {
     data_.emissiveStrength = strength;
   }
@@ -155,11 +149,11 @@ private:
       float shininess;
       float reflectivity;
       float transparency;
-      float isVolumetric;
       float emissiveStrength;
       float padding1;
-      glm::vec3 emissive;
       float padding2;
+      glm::vec3 emissive;
+      float padding3;
       glm::vec3 scatterColor;
       float absorptionCoeff;
     } data_;

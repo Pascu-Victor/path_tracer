@@ -1,6 +1,7 @@
 #ifndef VULKAN_RENDERER_H
 #define VULKAN_RENDERER_H
 
+#include "Ellipsoid.h"
 #include <SDL3/SDL.h>
 #include <glm/glm.hpp>
 #include <string>
@@ -18,12 +19,14 @@ struct GPUSphere {
   int materialIndex;
 };
 
+// GPUEllipsoid is defined in Ellipsoid.h
+
 struct GPUMaterial {
   glm::vec4 colorAndAmbient;      // color.xyz, ambient.w
   glm::vec4 diffuseSpecularShiny; // diffuse.x, specular.y, shininess.z,
                                   // reflectivity.w
-  glm::vec4 transIsoEmissive;     // transparency.x, isVolumetric.y,
-                                  // emissiveStrength.z, padding.w
+  glm::vec4 transparencyEmissive; // transparency.x, emissiveStrength.y,
+                                  // padding.z, padding.w
   glm::vec4 emissive;             // emissive.xyz, padding.w
   glm::vec4 scatterAndAbsorption; // scatterColor.xyz, absorptionCoeff.w
 };
@@ -49,17 +52,21 @@ struct GPUVolumetricData {
 
 // Push constants for shader
 struct PushConstants {
-  glm::mat4 cameraMatrix;
-  glm::vec3 cameraPos;
-  float time;
-  int numSpheres;
-  int numLights;
-  int numVolumes;
-  int maxDepth;
-  glm::vec3 bgColorTop;
-  float padding1;
-  glm::vec3 bgColorBottom;
-  float padding2;
+  glm::mat4 cameraMatrix;  // offset 0, size 64
+  glm::vec3 cameraPos;     // offset 64, size 12
+  float time;              // offset 76, size 4
+  int numSpheres;          // offset 80, size 4
+  int numEllipsoids;       // offset 84, size 4
+  int numLights;           // offset 88, size 4
+  int numVolumes;          // offset 92, size 4
+  int maxDepth;            // offset 96, size 4
+  int padding1;            // offset 100, size 4
+  int padding2;            // offset 104, size 4
+  int padding3;            // offset 108, size 4
+  glm::vec3 bgColorTop;    // offset 112, size 12 (vec3 aligned to 16)
+  float padding4;          // offset 124, size 4
+  glm::vec3 bgColorBottom; // offset 128, size 12 (vec3 aligned to 16)
+  float padding5;          // offset 140, size 4
 };
 
 class VulkanRenderer {
@@ -72,6 +79,7 @@ public:
 
   void
   updateScene(const std::vector<GPUSphere> &spheres,
+              const std::vector<GPUEllipsoid> &ellipsoids,
               const std::vector<GPUMaterial> &materials,
               const std::vector<GPULight> &lights,
               const std::vector<GPUVolumetricData> &volumes,
@@ -127,6 +135,9 @@ private:
   // Storage buffers
   VkBuffer vkSphereBuffer = VK_NULL_HANDLE;
   VkDeviceMemory vkSphereBufferMemory = VK_NULL_HANDLE;
+
+  VkBuffer vkEllipsoidBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory vkEllipsoidBufferMemory = VK_NULL_HANDLE;
 
   VkBuffer vkMaterialBuffer = VK_NULL_HANDLE;
   VkDeviceMemory vkMaterialBufferMemory = VK_NULL_HANDLE;

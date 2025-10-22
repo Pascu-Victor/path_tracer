@@ -25,6 +25,7 @@ set(SOURCES
     src/Material.cpp
     src/Object.cpp
     src/Sphere.cpp
+    src/Ellipsoid.cpp
     src/Camera.cpp
     src/Light.cpp
     src/Volumetric.cpp
@@ -40,6 +41,7 @@ set(HEADERS
     include/Material.h
     include/Object.h
     include/Sphere.h
+    include/Ellipsoid.h
     include/Camera.h
     include/Light.h
     include/Volumetric.h

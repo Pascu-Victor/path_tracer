@@ -1,6 +1,12 @@
 #version 460
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_ballot : enable
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+
+// Optimize for AMD RDNA 3 wave32/wave64 architecture
+layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(set = 0, binding = 0, rgba8) uniform image2D outputImage;
 
@@ -15,27 +21,40 @@ layout(set = 0, binding = 1) readonly buffer SphereBuf {
     Sphere sphereData[];
 } sphereBuffer;
 
+struct Ellipsoid {
+    vec3 center;
+    float padding1;
+    vec3 radii;
+    int materialIndex;
+    vec3 color;
+    float padding2;
+};
+
+layout(set = 0, binding = 2) readonly buffer EllipsoidBuf {
+    Ellipsoid ellipsoidData[];
+} ellipsoidBuffer;
+
 struct Material {
     vec4 colorAndAmbient;      // color.xyz, ambient.w
     vec4 diffuseSpecularShiny; // diffuse.x, specular.y, shininess.z, reflectivity.w
-    vec4 transIsoEmissive;     // transparency.x, isVolumetric.y, emissiveStrength.z, padding.w
+    vec4 transparencyEmissive; // transparency.x, emissiveStrength.y, padding.z, padding.w
     vec4 emissive;             // emissive.xyz, padding.w
     vec4 scatterAndAbsorption; // scatterColor.xyz, absorptionCoeff.w
 };
 
-layout(set = 0, binding = 2, std430) readonly buffer MaterialBuf {
+layout(set = 0, binding = 3, std430) readonly buffer MaterialBuf {
     Material materialData[];
 } materialBuffer;
 
-layout(set = 0, binding = 3) readonly buffer LightBuf {
+layout(set = 0, binding = 4) readonly buffer LightBuf {
     vec4 lightData[];
 } lightBuffer;
 
-layout(set = 0, binding = 4) readonly buffer VolumeBuf {
+layout(set = 0, binding = 5) readonly buffer VolumeBuf {
     vec4 volumeData[];
 } volumeBuffer;
 
-layout(set = 0, binding = 5) readonly buffer VoxelDataBuf {
+layout(set = 0, binding = 6) readonly buffer VoxelDataBuf {
     uint voxelData[];
 } voxelDataBuffer;
 
@@ -44,13 +63,17 @@ layout(push_constant) uniform PushConstants {
     vec3 cameraPos;
     float time;
     int numSpheres;
+    int numEllipsoids;
     int numLights;
     int numVolumes;
     int maxDepth;
+    int padding1;
+    int padding2;
+    int padding3;
     vec3 bgColorTop;
-    float padding1;
+    float padding4;
     vec3 bgColorBottom;
-    float padding2;
+    float padding5;
 } pushConst;
 
 struct Ray {
@@ -95,14 +118,14 @@ Ray createCameraRay(vec2 uv) {
     return ray;
 }
 
-// Sphere intersection - optimized to reduce redundant calculations
 bool hitSphere(Ray ray, vec3 center, float radius, float tMin, float tMax, inout HitRecord rec) {
     vec3 oc = ray.origin - center;
-    // Assume ray.direction is normalized, so dot(ray.direction, ray.direction) = 1.0
+    
+    // Fast ray-sphere intersection using half_b optimization
     float half_b = dot(oc, ray.direction);
     float c = dot(oc, oc) - radius * radius;
     
-    // Optimized discriminant calculation (using half_b instead of b)
+    // Early exit using subgroup ballot for branch coherency
     float discriminant = half_b * half_b - c;
     if (discriminant < 0.0) return false;
     
@@ -116,7 +139,43 @@ bool hitSphere(Ray ray, vec3 center, float radius, float tMin, float tMax, inout
     
     rec.t = t;
     rec.point = ray.origin + t * ray.direction;
-    rec.normal = (rec.point - center) * (1.0 / radius); // Faster than normalize
+    // multiply by reciprocal instead of normalize
+    rec.normal = (rec.point - center) * (1.0 / radius);
+    rec.hit = true;
+    
+    return true;
+}
+
+// Ellipsoid intersection - transforms ray to unit sphere space
+bool hitEllipsoid(Ray ray, vec3 center, vec3 radii, float tMin, float tMax, inout HitRecord rec) {
+    vec3 oc = ray.origin - center;
+    
+    // Scale by inverse radii
+    vec3 invRadii = 1.0 / radii;
+    vec3 ocScaled = oc * invRadii;
+    vec3 dirScaled = ray.direction * invRadii;
+    
+    // solve for unit sphere intersection
+    float a = dot(dirScaled, dirScaled);
+    float half_b = dot(ocScaled, dirScaled);
+    float c = dot(ocScaled, ocScaled) - 1.0;
+    
+    float discriminant = half_b * half_b - a * c;
+    if (discriminant < 0.0) return false;
+    
+    float sqrtDisc = sqrt(discriminant);
+    float t = (-half_b - sqrtDisc) / a;
+    
+    if (t < tMin || t > tMax) {
+        t = (-half_b + sqrtDisc) / a;
+        if (t < tMin || t > tMax) return false;
+    }
+    
+    rec.t = t;
+    rec.point = ray.origin + t * ray.direction;
+    // Normal in ellipsoid space: gradient of (x/rx)^2 + (y/ry)^2 + (z/rz)^2 = 1
+    vec3 normalUnscaled = (rec.point - center) * invRadii * invRadii;
+    rec.normal = normalize(normalUnscaled);
     rec.hit = true;
     
     return true;
@@ -126,7 +185,6 @@ bool traceRay(Ray ray, out HitRecord rec, float tMin, float tMax) {
     float closestT = tMax;
     bool hitAnything = false;
     
-    // Cache sphere data to reduce buffer reads
     for (int i = 0; i < pushConst.numSpheres; i++) {
         Sphere sphere = sphereBuffer.sphereData[i];
         
@@ -139,6 +197,18 @@ bool traceRay(Ray ray, out HitRecord rec, float tMin, float tMax) {
         }
     }
     
+    for (int i = 0; i < pushConst.numEllipsoids; i++) {
+        Ellipsoid ellipsoid = ellipsoidBuffer.ellipsoidData[i];
+        
+        HitRecord tempRec;
+        if (hitEllipsoid(ray, ellipsoid.center, ellipsoid.radii, tMin, closestT, tempRec)) {
+            closestT = tempRec.t;
+            rec = tempRec;
+            rec.materialIndex = ellipsoid.materialIndex;
+            hitAnything = true;
+        }
+    }
+    
     return hitAnything;
 }
 
@@ -147,10 +217,10 @@ float getShadowFactor(vec3 point, vec3 lightPos) {
     shadowRay.origin = point;
     vec3 lightVec = lightPos - point;
     float distToLight = length(lightVec);
-    shadowRay.direction = lightVec / distToLight; // Normalized, reusing calculated length
+    shadowRay.direction = lightVec / distToLight;
     
     HitRecord rec;
-    // Early return with binary result (0 or 1)
+    // Early return? bool
     return traceRay(shadowRay, rec, EPSILON, distToLight) ? 0.0 : 1.0;
 }
 
@@ -158,11 +228,21 @@ vec3 calculateLighting(HitRecord rec, vec3 viewDir) {
     // Load material once
     Material mat = materialBuffer.materialData[rec.materialIndex];
     vec3 surfaceColor = mat.colorAndAmbient.xyz;
+    float ambient = mat.colorAndAmbient.w;
+    float diffuseCoeff = mat.diffuseSpecularShiny.x;
+    float specularCoeff = mat.diffuseSpecularShiny.y;
+    float shininess = mat.diffuseSpecularShiny.z;
+    float emissiveStrength = mat.transparencyEmissive.y;
     
     // Start with ambient
-    vec3 finalColor = vec3(0.1) * surfaceColor;
+    vec3 finalColor = ambient * surfaceColor;
     
-    // Unroll small light loops for better performance
+    // Add emissive contribution
+    if (emissiveStrength > 0.0) {
+        finalColor += surfaceColor * emissiveStrength;
+    }
+    
+    // Sample light from explicit light sources
     for (int i = 0; i < pushConst.numLights; i++) {
         vec4 lightData = lightBuffer.lightData[i];
         vec3 lightPos = lightData.xyz;
@@ -180,14 +260,91 @@ vec3 calculateLighting(HitRecord rec, vec3 viewDir) {
         
         // Diffuse
         float diffuseStrength = max(0.0, dot(rec.normal, lightDir));
-        vec3 diffuse = vec3(0.7) * diffuseStrength * surfaceColor * attenuation;
+        vec3 diffuse = diffuseCoeff * diffuseStrength * surfaceColor * attenuation;
         
         // Specular (Blinn-Phong)
         vec3 halfDir = normalize(lightDir + viewDir);
-        float specularStrength = pow(max(0.0, dot(rec.normal, halfDir)), 32.0);
-        vec3 specular = vec3(0.3) * specularStrength * attenuation;
+        float specularStrength = pow(max(0.0, dot(rec.normal, halfDir)), shininess);
+        vec3 specular = surfaceColor * specularCoeff * specularStrength * attenuation;
         
         finalColor += (diffuse + specular);
+    }
+    
+    // Sample light from emissive spheres
+    for (int i = 0; i < pushConst.numSpheres; i++) {
+        Sphere sphere = sphereBuffer.sphereData[i];
+        Material sphereMat = materialBuffer.materialData[sphere.materialIndex];
+        float sphereEmissive = sphereMat.transparencyEmissive.y;
+        
+        // DEBUG: Add blue tint for ANY sphere iteration
+        // finalColor += vec3(0.0, 0.0, 0.1);
+        
+        if (sphereEmissive > 0.0) {
+            vec3 emissiveColor = sphereMat.colorAndAmbient.xyz;
+            vec3 toSphere = sphere.center - rec.point;
+            float distToSphere = length(toSphere);
+            vec3 dirToSphere = toSphere / distToSphere;
+            
+            // Check if sphere is above the surface
+            float alignment = dot(rec.normal, dirToSphere);
+            if (alignment > 0.0) {
+                // Check if path is blocked by OTHER objects (not the emissive sphere itself)
+                Ray shadowRay;
+                shadowRay.origin = rec.point + rec.normal * EPSILON;
+                shadowRay.direction = dirToSphere;
+                
+                HitRecord shadowHit;
+                // Check for occlusion BEFORE reaching the emissive sphere surface
+                float checkDist = distToSphere - sphere.radius - EPSILON;
+                bool blocked = traceRay(shadowRay, shadowHit, EPSILON, checkDist);
+                
+                if (!blocked) {
+                    // Calculate lighting contribution from emissive sphere
+                    float attenuation = sphereEmissive / (1.0 + 0.5 * distToSphere + 0.1 * distToSphere * distToSphere);
+                    float diffuseStrength = alignment;
+                    // Apply emissive light to surface
+                    vec3 emissiveLight = diffuseStrength * emissiveColor * attenuation;
+                    finalColor += emissiveLight;
+                }
+            }
+        }
+    }
+    
+    // Sample light from emissive ellipsoids
+    for (int i = 0; i < pushConst.numEllipsoids; i++) {
+        Ellipsoid ellipsoid = ellipsoidBuffer.ellipsoidData[i];
+        Material ellipsoidMat = materialBuffer.materialData[ellipsoid.materialIndex];
+        float ellipsoidEmissive = ellipsoidMat.transparencyEmissive.y;
+        
+        if (ellipsoidEmissive > 0.0) {
+            vec3 emissiveColor = ellipsoidMat.colorAndAmbient.xyz;
+            vec3 toEllipsoid = ellipsoid.center - rec.point;
+            float distToEllipsoid = length(toEllipsoid);
+            vec3 dirToEllipsoid = toEllipsoid / distToEllipsoid;
+            
+            // Check if ellipsoid is above the surface
+            float alignment = dot(rec.normal, dirToEllipsoid);
+            if (alignment > 0.0) {
+                // Check if path is blocked by OTHER objects
+                Ray shadowRay;
+                shadowRay.origin = rec.point + rec.normal * EPSILON;
+                shadowRay.direction = dirToEllipsoid;
+                
+                HitRecord shadowHit;
+                // Approximate ellipsoid radius as max of its radii
+                float approxRadius = max(max(ellipsoid.radii.x, ellipsoid.radii.y), ellipsoid.radii.z);
+                float checkDist = distToEllipsoid - approxRadius - EPSILON;
+                bool blocked = traceRay(shadowRay, shadowHit, EPSILON, checkDist);
+                
+                if (!blocked) {
+                    // Calculate lighting contribution from emissive ellipsoid
+                    float attenuation = ellipsoidEmissive / (1.0 + 0.5 * distToEllipsoid + 0.1 * distToEllipsoid * distToEllipsoid);
+                    float diffuseStrength = alignment;
+                    vec3 emissiveLight = diffuseStrength * emissiveColor * attenuation;
+                    finalColor += emissiveLight;
+                }
+            }
+        }
     }
     
     return finalColor;
@@ -255,6 +412,7 @@ vec3 rayMarchVolume(Ray ray, float maxDist, int volumeIndex) {
     vec3 volPos = volData0.xyz;
     vec3 v0 = volData1.xyz;
     vec3 v1 = volData2.xyz;
+    int materialIndex = floatBitsToInt(volData3.y);
     
     vec3 boxMin = volPos + v0;
     vec3 boxMax = volPos + v1;
@@ -266,36 +424,32 @@ vec3 rayMarchVolume(Ray ray, float maxDist, int volumeIndex) {
     
     tNear = max(tNear, 0.0);
     tFar = min(tFar, maxDist);
+    Material mat = materialBuffer.materialData[materialIndex];
+    vec3 materialColor = mat.scatterAndAbsorption.xyz;
+    float absorptionCoeff = mat.scatterAndAbsorption.w;
     
-    vec3 materialColor = vec3(0.7, 0.5, 0.3);
-    
-    // Adaptive ray marching with early termination
-    // Increase step size for faster traversal, reduce max steps
     float stepSize = 0.02; // Doubled from 0.01
     float t = tNear;
-    int nonZeroCount = 0;
+    float accumulatedDensity = 0.0;
     int stepCount = 0;
     const int maxSteps = 500; // Reduced from 1000
+    const float TRANSPARENCY_EPSILON = 0.0001;
     
     // Early termination if we find enough solid voxels
     while (t < tFar && stepCount < maxSteps) {
         vec3 samplePos = ray.origin + ray.direction * t;
         float density = sampleVolume(samplePos, volumeIndex);
         
-        nonZeroCount += int(density > 0.0); // Branchless increment
-        
+        float sampleAlpha = density * absorptionCoeff;
+        accumulatedDensity += (1.0 - accumulatedDensity) * sampleAlpha;
+
         t += stepSize;
         stepCount++;
         
-        // Early exit if we've found a significant amount of solid voxels
-        if (nonZeroCount > maxSteps / 4 && stepCount > 50) {
-            break;
-        }
     }
     
     // Branchless result calculation
-    float ratio = float(nonZeroCount) / float(max(stepCount, 1));
-    return mix(vec3(-1.0), materialColor * ratio, float(nonZeroCount > 0));
+    return mix(vec3(-1.0), materialColor * accumulatedDensity, float(accumulatedDensity >= TRANSPARENCY_EPSILON));
 }
 
 vec3 renderVolumetric(Ray ray) {
@@ -308,92 +462,88 @@ vec3 renderVolumetric(Ray ray) {
 
 vec3 traceIterative(Ray initialRay) {
     vec3 finalColor = vec3(0.0);
-    float accumulatedOpacity = 0.0;
-    const float OPACITY_THRESHOLD = 0.995; // Slightly lower for faster convergence
+    vec3 throughput = vec3(1.0); // How much light can pass through bounces
+    const float THROUGHPUT_THRESHOLD = 0.001; // When to stop tracing
     
     Ray currentRay = initialRay;
     float tMin = EPSILON;
     
-    // Reduce max bounces for better performance
-    const int maxBounces = 6; // Reduced from 10
+    const int maxBounces = 10;
     
     for (int bounce = 0; bounce < maxBounces; bounce++) {
-        if (accumulatedOpacity >= OPACITY_THRESHOLD) break;
+        if (length(throughput) < THROUGHPUT_THRESHOLD) break;
         
         HitRecord rec;
         
-        // Check for sphere intersection first (usually faster than volume)
-        bool hitSphere = traceRay(currentRay, rec, tMin, MAX_DISTANCE);
-        
-        // Only check volumetric if we have volumes
+        bool hitSolid = traceRay(currentRay, rec, tMin, MAX_DISTANCE);
+
         vec3 volumetricContribution = vec3(-1.0);
-        float volumeT = MAX_DISTANCE;
         float volumeAlpha = 0.0;
         
         if (pushConst.numVolumes > 0) {
-            volumetricContribution = rayMarchVolume(currentRay, hitSphere ? rec.t : MAX_DISTANCE, 0);
+            volumetricContribution = rayMarchVolume(currentRay, hitSolid ? rec.t : MAX_DISTANCE, 0);
             
             if (volumetricContribution.x >= 0.0) {
-                const vec3 maxColor = vec3(0.7, 0.5, 0.3);
-                volumeAlpha = clamp(length(volumetricContribution) / length(maxColor), 0.0, 1.0);
-                
-                // Cache volume position read
-                vec3 volPos = volumeBuffer.volumeData[0].xyz;
-                volumeT = length(volPos - currentRay.origin);
+                volumeAlpha = clamp(length(volumetricContribution) / length(vec3(1.0)), 0.0, 1.0);
             }
         }
         
-        // Determine which is closer
-        if (hitSphere && rec.t < volumeT) {
-            // Sphere is closer
-            vec3 viewDir = normalize(currentRay.origin - rec.point);
-            vec3 surfaceColor = calculateLighting(rec, viewDir);
-            
-            // Load material once
+        // Process volumetric contribution first
+        if (volumeAlpha > 0.0) {
+            finalColor += throughput * volumetricContribution * volumeAlpha;
+            throughput *= (1.0 - volumeAlpha);
+        }
+        
+        // Now handle solid object hit
+        if (hitSolid) {
+            // Load material to check for emission
             Material mat = materialBuffer.materialData[rec.materialIndex];
-            float transparency = mat.transIsoEmissive.x;
+            float emissiveStrength = mat.transparencyEmissive.y;
+            vec3 surfaceColor = mat.colorAndAmbient.xyz;
+            
+            // Add emissive contribution (direct emission from this surface)
+            if (emissiveStrength > 0.0) {
+                finalColor += throughput * surfaceColor * emissiveStrength;
+            }
+            
+            // Calculate lighting (diffuse + specular from lights)
+            vec3 viewDir = normalize(currentRay.origin - rec.point);
+            vec3 litColor = calculateLighting(rec, viewDir);
+            
+            float transparency = mat.transparencyEmissive.x;
             float reflectivity = mat.diffuseSpecularShiny.w;
             
-            float opacity = 1.0 - transparency;
-            float remainingOpacity = 1.0 - accumulatedOpacity;
-            
-            // Mix blend current color with surface
-            finalColor = mix(finalColor, surfaceColor, opacity * remainingOpacity);
-            accumulatedOpacity += opacity * remainingOpacity;
-            
-            // Continue ray through/reflected
-            if (transparency > 0.01 && accumulatedOpacity < OPACITY_THRESHOLD) {
-                // Continue through transparent surface
-                currentRay.origin = rec.point + currentRay.direction * EPSILON;
-                tMin = EPSILON;
-            } else if (reflectivity > 0.01) {
-                // Reflect
+            // Handle reflections
+            if (reflectivity > 0.01) {
+                float surfaceOpacity = (1.0 - reflectivity) * (1.0 - transparency);
+                finalColor += throughput * litColor * surfaceOpacity;
+                throughput *= reflectivity;
+                
+                // Reflect ray to trace reflection
                 vec3 reflectDir = reflect(currentRay.direction, rec.normal);
                 currentRay.origin = rec.point + rec.normal * EPSILON;
                 currentRay.direction = reflectDir;
                 tMin = EPSILON;
+            } else if (transparency > 0.01) {
+                // Transparent surface - continue through
+                float opacity = 1.0 - transparency;
+                finalColor += throughput * litColor * opacity;
+                throughput *= transparency;
+                
+                currentRay.origin = rec.point + currentRay.direction * EPSILON;
+                tMin = EPSILON;
             } else {
+                // Opaque, non-reflective surface - add final contribution and stop
+                finalColor += throughput * litColor;
                 break;
             }
-        } else if (volumeAlpha > 0.0) {
-            // Volume is closer or sphere missed
-            float remainingOpacity = 1.0 - accumulatedOpacity;
-            
-            // Mix blend with volumetric
-            finalColor = mix(finalColor, volumetricContribution, volumeAlpha * remainingOpacity);
-            accumulatedOpacity += volumeAlpha * remainingOpacity;
-            
-            // Continue ray through volume
-            currentRay.origin = currentRay.origin + currentRay.direction * (volumeT + 2.0);
-            tMin = EPSILON;
         } else {
-            // Nothing hit, render background
+            // No solid hit - render background
             vec3 unitDir = normalize(currentRay.direction);
             float t = 0.5 * (unitDir.y + 1.0);
             vec3 bgColor = mix(pushConst.bgColorBottom, pushConst.bgColorTop, t);
             
-            float remainingOpacity = 1.0 - accumulatedOpacity;
-            finalColor = mix(finalColor, bgColor, remainingOpacity);
+            finalColor += throughput * bgColor;
             break;
         }
     }
@@ -401,20 +551,23 @@ vec3 traceIterative(Ray initialRay) {
     return finalColor;
 }
 
-layout(local_size_x = 16, local_size_y = 16) in;
 void main() {
     ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imageDims = imageSize(outputImage);
     
-    if (pixelCoord.x >= imageSize(outputImage).x || pixelCoord.y >= imageSize(outputImage).y) {
+    // Early exit for out-of-bounds invocations
+    if (pixelCoord.x >= imageDims.x || pixelCoord.y >= imageDims.y) {
         return;
     }
     
-    vec2 uv = vec2(pixelCoord) / imageSize(outputImage);
+    vec2 uv = vec2(pixelCoord) / vec2(imageDims);
     uv.y = 1.0 - uv.y;
     
+    // Trace ray through scene
     Ray ray = createCameraRay(uv);
     vec3 color = traceIterative(ray);
     
+    // Clamp and store result
     color = clamp(color, 0.0, 1.0);
-    imageStore(outputImage, pixelCoord, vec4(color.r, color.g, color.b, 1.0));
+    imageStore(outputImage, pixelCoord, vec4(color, 1.0));
 }

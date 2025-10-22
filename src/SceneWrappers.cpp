@@ -6,8 +6,8 @@ GPUMaterial Material::toGPU() const noexcept {
   gpu.colorAndAmbient = glm::vec4(data_.color, data_.ambient);
   gpu.diffuseSpecularShiny = glm::vec4(data_.diffuse, data_.specular,
                                        data_.shininess, data_.reflectivity);
-  gpu.transIsoEmissive = glm::vec4(data_.transparency, data_.isVolumetric,
-                                   data_.emissiveStrength, 0.0f);
+  gpu.transparencyEmissive =
+      glm::vec4(data_.transparency, data_.emissiveStrength, 0.0f, 0.0f);
   gpu.emissive = glm::vec4(data_.emissive, 0.0f);
   gpu.scatterAndAbsorption =
       glm::vec4(data_.scatterColor, data_.absorptionCoeff);

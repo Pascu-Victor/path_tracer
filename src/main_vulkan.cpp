@@ -1,4 +1,5 @@
 #include "Camera.h"
+#include "Ellipsoid.h"
 #include "SceneWrappers.h"
 #include "Vec3.h"
 #include "VulkanRenderer.h"
@@ -14,8 +15,8 @@
 #include <vector>
 
 // Window dimensions
-const int WINDOW_WIDTH = 1920;
-const int WINDOW_HEIGHT = 1080;
+const int WINDOW_WIDTH = 800;
+const int WINDOW_HEIGHT = 600;
 
 // Maximum recursion depth for bounce lighting
 const int MAX_DEPTH = 5;
@@ -120,6 +121,7 @@ int main(int argc, char *argv[]) {
 
   // Create scene with objects using wrapper classes
   std::vector<Sphere> spheres;
+  std::vector<Ellipsoid> ellipsoids;
   std::vector<Light> lights;
   std::vector<VolumetricData> volumes;
 
@@ -135,23 +137,20 @@ int main(int argc, char *argv[]) {
   yellowMat.setSpecular(0.1f);
   yellowMat.setShininess(16.0f);
 
-  // Green diffuse material
-  Material greenMat =
-      Material::Diffuse(glm::vec3(0.2f, 0.8f, 0.2f), 0.7f, 0.1f);
-  greenMat.setSpecular(0.3f);
-  greenMat.setShininess(32.0f);
+  // Green emissive material
+  Material greenMat = Material::Emissive(glm::vec3(0.2f, 0.8f, 0.2f), 2.0f);
 
-  // Blue diffuse material
+  // Blue semi-glossy material
   Material blueMat = Material::Diffuse(glm::vec3(0.2f, 0.2f, 0.8f), 0.7f, 0.1f);
-  blueMat.setSpecular(0.3f);
-  blueMat.setShininess(32.0f);
+  blueMat.setSpecular(0.5f);
+  blueMat.setShininess(64.0f);
 
   // Mirror material
-  Material mirrorMat = Material::Mirror(glm::vec3(0.9f, 0.9f, 0.9f), 0.7f);
+  Material mirrorMat = Material::Mirror(glm::vec3(0.9f, 0.9f, 0.9f), 0.9f);
 
   // Volumetric material for walnut
   Material volumetricMat =
-      Material::Volumetric(glm::vec3(0.8f, 0.6f, 0.4f), 2.0f);
+      Material::Volumetric(glm::vec3(0.8f, 0.6f, 0.4f), 8.0f);
 
   // Sphere definitions using wrapper class with Material references
   spheres.push_back(Sphere(glm::vec3(0.0f, 0.0f, -1.0f), 0.5f,
@@ -177,6 +176,17 @@ int main(int argc, char *argv[]) {
                            glm::vec3(0.8f, 0.8f, 0.2f),
                            yellowMat)); // Yellow sphere
 
+  // Ellipsoid definitions using wrapper class with Material references
+  ellipsoids.push_back(Ellipsoid(glm::vec3(-2.0f, 0.8f, -1.0f), // Center
+                                 glm::vec3(0.5f, 0.8f, 0.3f), // Radii (x, y, z)
+                                 glm::vec3(0.8f, 0.4f, 0.8f), // Purple color
+                                 mirrorMat));                 // Mirror material
+
+  ellipsoids.push_back(Ellipsoid(glm::vec3(0.0f, 1.2f, -2.0f), // Center
+                                 glm::vec3(0.6f, 0.4f, 0.4f), // Radii (x, y, z)
+                                 glm::vec3(0.4f, 0.8f, 0.8f), // Cyan color
+                                 blueMat));                   // Blue material
+
   // Light definitions using wrapper class
   lights.push_back(Light(glm::vec3(2.0f, 2.0f, 1.0f), 1.0f,
                          glm::vec3(1.0f, 0.9f, 0.8f))); // Warm light
@@ -194,7 +204,6 @@ int main(int argc, char *argv[]) {
   std::string rawPath = "volume/walnut.raw";
 
   if (loadVolumetricData(datPath, rawPath, volumeData, volumeResolution)) {
-    // Create volumetric data using wrapper class with Material reference
     VolumetricData volData(
         glm::vec3(1.5f, 1.0f, -0.5f), // Position where camera is looking
         0.001f,                       // Scale factor
@@ -212,13 +221,18 @@ int main(int argc, char *argv[]) {
 
   // Pre-render: Build material list and map object materials to indices
   std::vector<Material> materials;
-  SceneManager::prepareForRender(materials, spheres, volumes);
+  SceneManager::prepareForRender(materials, spheres, ellipsoids, volumes);
 
   std::cout << "Pre-render complete: " << materials.size()
             << " unique materials collected" << std::endl;
   std::cout << "Sphere material indices: ";
   for (const auto &sphere : spheres) {
     std::cout << sphere.getMaterialIndex() << " ";
+  }
+  std::cout << std::endl;
+  std::cout << "Ellipsoid material indices: ";
+  for (const auto &ellipsoid : ellipsoids) {
+    std::cout << ellipsoid.getMaterialIndex() << " ";
   }
   std::cout << std::endl;
   if (!volumes.empty()) {
@@ -229,8 +243,9 @@ int main(int argc, char *argv[]) {
     std::cout << std::endl;
   }
 
-  // Convert wrapper objects to GPU format (parallelize conversions)
+  // Convert wrapper objects to GPU format
   std::vector<GPUSphere> gpuSpheres(spheres.size());
+  std::vector<GPUEllipsoid> gpuEllipsoids(ellipsoids.size());
   std::vector<GPUMaterial> gpuMaterials(materials.size());
   std::vector<GPULight> gpuLights(lights.size());
   std::vector<GPUVolumetricData> gpuVolumes(volumes.size());
@@ -239,6 +254,11 @@ int main(int argc, char *argv[]) {
   std::transform(std::execution::par_unseq, spheres.begin(), spheres.end(),
                  gpuSpheres.begin(),
                  [](const Sphere &sphere) { return sphere.toGPU(); });
+
+  // Parallel transform for ellipsoids
+  std::transform(std::execution::par_unseq, ellipsoids.begin(),
+                 ellipsoids.end(), gpuEllipsoids.begin(),
+                 [](const Ellipsoid &ellipsoid) { return ellipsoid.toGPU(); });
 
   // Parallel transform for materials
   std::transform(std::execution::par_unseq, materials.begin(), materials.end(),
@@ -256,12 +276,21 @@ int main(int argc, char *argv[]) {
                  [](const VolumetricData &volume) { return volume.toGPU(); });
 
   // Update scene in GPU
-  vulkanRenderer.updateScene(gpuSpheres, gpuMaterials, gpuLights, gpuVolumes,
-                             volumeData);
+  vulkanRenderer.updateScene(gpuSpheres, gpuEllipsoids, gpuMaterials, gpuLights,
+                             gpuVolumes, volumeData);
 
   std::cout << "Scene data uploaded to GPU" << std::endl;
 
-  // Main loop - render a few frames
+  // Prepare static push constants
+  PushConstants pushConst{};
+  pushConst.numSpheres = static_cast<int>(gpuSpheres.size());
+  pushConst.numEllipsoids = static_cast<int>(gpuEllipsoids.size());
+  pushConst.numLights = static_cast<int>(gpuLights.size());
+  pushConst.numVolumes = static_cast<int>(gpuVolumes.size());
+  pushConst.maxDepth = MAX_DEPTH;
+  pushConst.bgColorBottom = glm::vec3(1.0f, 1.0f, 1.0f); // White
+  pushConst.bgColorTop = glm::vec3(0.4f, 0.45f, 1.0f);   // Sky blue
+
   bool running = true;
   SDL_Event event;
 
@@ -272,7 +301,7 @@ int main(int argc, char *argv[]) {
 
   // Delta time calculation
   uint64_t lastFrameTime = SDL_GetTicksNS();
-  const float targetDeltaTime = 16.67f; // Target ~60 FPS (16.67ms per frame)
+  const float targetFrameTime = 1000.0f / 120.0f; // 8.33ms per frame
 
   while (running) {
     // Calculate delta time
@@ -292,7 +321,7 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // Orbit camera around the volume center at (2, 1.5, 0)
+    // Orbit camera around the volume center
     double x = 2.0 + orbitRadius * std::cos(theta);
     double z = 6.0 + orbitRadius * std::sin(theta);
     Vec3 newCameraPos(x, 1.5, z);
@@ -300,10 +329,7 @@ int main(int argc, char *argv[]) {
     camera.setLookFrom(newCameraPos);
     theta += 1.0 / 180.0;
 
-    // Prepare push constants for GPU
-    PushConstants pushConst{};
-
-    // Build camera matrix from camera position and look direction
+    // Update only dynamic push constants
     glm::vec3 eye(camera.origin.x, camera.origin.y, camera.origin.z);
     glm::vec3 center(2.0f, 1.5f, 0.0f);
     glm::vec3 up(0.0f, 1.0f, 0.0f);
@@ -314,13 +340,6 @@ int main(int argc, char *argv[]) {
     pushConst.cameraMatrix = proj * view;
     pushConst.cameraPos = eye;
     pushConst.time = time;
-    pushConst.numSpheres = static_cast<int>(gpuSpheres.size());
-    pushConst.numLights = static_cast<int>(gpuLights.size());
-    pushConst.numVolumes = static_cast<int>(gpuVolumes.size());
-    pushConst.maxDepth = MAX_DEPTH;
-    // Background gradient colors
-    pushConst.bgColorBottom = glm::vec3(1.0f, 1.0f, 1.0f); // White
-    pushConst.bgColorTop = glm::vec3(0.4f, 0.45f, 1.0f);   // Sky blue
 
     vulkanRenderer.render(pushConst);
 
@@ -328,6 +347,12 @@ int main(int argc, char *argv[]) {
 
     frameCount++;
     time += deltaTime;
+
+    // Cap frame rate
+    if (deltaTime < targetFrameTime) {
+      uint32_t delayMs = static_cast<uint32_t>(targetFrameTime - deltaTime);
+      SDL_Delay(delayMs);
+    }
   }
 
   // Cleanup

@@ -181,19 +181,33 @@ bool VulkanRenderer::createLogicalDevice() {
   queueCreateInfo.queueCount = 1;
   queueCreateInfo.pQueuePriorities = &queuePriority;
 
-  // Device extensions for RGP profiling
+  // Device extensions for AMD RT optimization
   std::vector<const char *> deviceExtensions;
   deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  // Enable shader clock for precise timing in RGP
   deviceExtensions.push_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
 
-  VkPhysicalDeviceFeatures deviceFeatures{};
+  // Enable Vulkan 1.3 subgroup features for AMD RDNA 3 optimization
+  VkPhysicalDeviceVulkan13Features vulkan13Features{};
+  vulkan13Features.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+  vulkan13Features.subgroupSizeControl = VK_TRUE;
+  vulkan13Features.computeFullSubgroups = VK_TRUE;
+
+  VkPhysicalDeviceVulkan11Features vulkan11Features{};
+  vulkan11Features.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+  vulkan11Features.pNext = &vulkan13Features;
+  vulkan11Features.shaderDrawParameters = VK_TRUE;
+
+  VkPhysicalDeviceFeatures2 deviceFeatures2{};
+  deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  deviceFeatures2.pNext = &vulkan11Features;
 
   VkDeviceCreateInfo deviceCreateInfo{};
   deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   deviceCreateInfo.queueCreateInfoCount = 1;
   deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-  deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
+  deviceCreateInfo.pNext = &deviceFeatures2;
   deviceCreateInfo.enabledExtensionCount =
       static_cast<uint32_t>(deviceExtensions.size());
   deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
@@ -272,6 +286,8 @@ bool VulkanRenderer::createBuffers() {
   // materialIndex+padding)
   size_t sphereBufferSize =
       sizeof(glm::vec4) * 200; // 2 vec4s per sphere * 100 spheres
+  size_t ellipsoidBufferSize =
+      sizeof(GPUEllipsoid) * 100; // Ellipsoids with center+radii+color
   size_t materialBufferSize = sizeof(GPUMaterial) * 100;
   size_t lightBufferSize = sizeof(GPULight) * 32;
   size_t volumeBufferSize = sizeof(GPUVolumetricData) * 32;
@@ -305,6 +321,24 @@ bool VulkanRenderer::createBuffers() {
   }
 
   vkBindBufferMemory(vkDevice, vkSphereBuffer, vkSphereBufferMemory, 0);
+
+  // Ellipsoid buffer
+  bufferInfo.size = ellipsoidBufferSize;
+  if (vkCreateBuffer(vkDevice, &bufferInfo, nullptr, &vkEllipsoidBuffer) !=
+      VK_SUCCESS) {
+    return false;
+  }
+  vkGetBufferMemoryRequirements(vkDevice, vkEllipsoidBuffer, &memReqs);
+  allocInfo.allocationSize = memReqs.size;
+  allocInfo.memoryTypeIndex =
+      findMemoryType(memoryProperties, memReqs.memoryTypeBits,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (vkAllocateMemory(vkDevice, &allocInfo, nullptr,
+                       &vkEllipsoidBufferMemory) != VK_SUCCESS) {
+    return false;
+  }
+  vkBindBufferMemory(vkDevice, vkEllipsoidBuffer, vkEllipsoidBufferMemory, 0);
 
   // Create material, light, and volume buffers similarly
   bufferInfo.size = materialBufferSize;
@@ -383,7 +417,7 @@ bool VulkanRenderer::createBuffers() {
 
 bool VulkanRenderer::createDescriptorSets() {
   // Create descriptor set layout
-  std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
+  std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
 
   // Output image binding
   bindings[0].binding = 0;
@@ -397,29 +431,35 @@ bool VulkanRenderer::createDescriptorSets() {
   bindings[1].descriptorCount = 1;
   bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-  // Material buffer binding
+  // Ellipsoid buffer binding
   bindings[2].binding = 2;
   bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   bindings[2].descriptorCount = 1;
   bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-  // Light buffer binding
+  // Material buffer binding
   bindings[3].binding = 3;
   bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   bindings[3].descriptorCount = 1;
   bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-  // Volume buffer binding
+  // Light buffer binding
   bindings[4].binding = 4;
   bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   bindings[4].descriptorCount = 1;
   bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-  // Voxel data buffer binding
+  // Volume buffer binding
   bindings[5].binding = 5;
   bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   bindings[5].descriptorCount = 1;
   bindings[5].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+  // Voxel data buffer binding
+  bindings[6].binding = 6;
+  bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  bindings[6].descriptorCount = 1;
+  bindings[6].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
   VkDescriptorSetLayoutCreateInfo layoutInfo{};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -437,7 +477,7 @@ bool VulkanRenderer::createDescriptorSets() {
   poolSizes[0].descriptorCount = 1;
   poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   poolSizes[1].descriptorCount =
-      5; // sphere, material, light, volume, voxelData
+      6; // sphere, ellipsoid, material, light, volume, voxelData
 
   VkDescriptorPoolCreateInfo poolInfo{};
   poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -725,6 +765,7 @@ bool VulkanRenderer::createSwapChain(SDL_Window *window) {
 }
 
 void VulkanRenderer::updateScene(const std::vector<GPUSphere> &spheres,
+                                 const std::vector<GPUEllipsoid> &ellipsoids,
                                  const std::vector<GPUMaterial> &materials,
                                  const std::vector<GPULight> &lights,
                                  const std::vector<GPUVolumetricData> &volumes,
@@ -759,6 +800,16 @@ void VulkanRenderer::updateScene(const std::vector<GPUSphere> &spheres,
     std::memcpy(data, sphereData.data(),
                 sphereData.size() * sizeof(PackedSphere));
     vkUnmapMemory(vkDevice, vkSphereBufferMemory);
+  }
+
+  // Copy ellipsoid data
+  if (!ellipsoids.empty()) {
+    void *data;
+    vkMapMemory(vkDevice, vkEllipsoidBufferMemory, 0,
+                ellipsoids.size() * sizeof(GPUEllipsoid), 0, &data);
+    std::memcpy(data, ellipsoids.data(),
+                ellipsoids.size() * sizeof(GPUEllipsoid));
+    vkUnmapMemory(vkDevice, vkEllipsoidBufferMemory);
   }
 
   // Convert light data to vec4 format (position.xyz, intensity.w)
@@ -809,7 +860,7 @@ void VulkanRenderer::updateScene(const std::vector<GPUSphere> &spheres,
   }
 
   // Update descriptor set with new buffers
-  std::array<VkWriteDescriptorSet, 6> descriptorWrites{};
+  std::array<VkWriteDescriptorSet, 7> descriptorWrites{};
 
   VkDescriptorImageInfo imageInfo{};
   imageInfo.imageView = vkOutputImageView;
@@ -834,53 +885,65 @@ void VulkanRenderer::updateScene(const std::vector<GPUSphere> &spheres,
   descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   descriptorWrites[1].pBufferInfo = &sphereBufferInfo;
 
-  VkDescriptorBufferInfo materialBufferInfo{};
-  materialBufferInfo.buffer = vkMaterialBuffer;
-  materialBufferInfo.offset = 0;
-  materialBufferInfo.range = VK_WHOLE_SIZE;
+  VkDescriptorBufferInfo ellipsoidBufferInfo{};
+  ellipsoidBufferInfo.buffer = vkEllipsoidBuffer;
+  ellipsoidBufferInfo.offset = 0;
+  ellipsoidBufferInfo.range = VK_WHOLE_SIZE;
 
   descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   descriptorWrites[2].dstSet = vkDescriptorSet;
   descriptorWrites[2].dstBinding = 2;
   descriptorWrites[2].descriptorCount = 1;
   descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  descriptorWrites[2].pBufferInfo = &materialBufferInfo;
+  descriptorWrites[2].pBufferInfo = &ellipsoidBufferInfo;
 
-  VkDescriptorBufferInfo lightBufferInfo{};
-  lightBufferInfo.buffer = vkLightBuffer;
-  lightBufferInfo.offset = 0;
-  lightBufferInfo.range = VK_WHOLE_SIZE;
+  VkDescriptorBufferInfo materialBufferInfo{};
+  materialBufferInfo.buffer = vkMaterialBuffer;
+  materialBufferInfo.offset = 0;
+  materialBufferInfo.range = VK_WHOLE_SIZE;
 
   descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   descriptorWrites[3].dstSet = vkDescriptorSet;
   descriptorWrites[3].dstBinding = 3;
   descriptorWrites[3].descriptorCount = 1;
   descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  descriptorWrites[3].pBufferInfo = &lightBufferInfo;
+  descriptorWrites[3].pBufferInfo = &materialBufferInfo;
 
-  VkDescriptorBufferInfo volumeBufferInfo{};
-  volumeBufferInfo.buffer = vkVolumeBuffer;
-  volumeBufferInfo.offset = 0;
-  volumeBufferInfo.range = VK_WHOLE_SIZE;
+  VkDescriptorBufferInfo lightBufferInfo{};
+  lightBufferInfo.buffer = vkLightBuffer;
+  lightBufferInfo.offset = 0;
+  lightBufferInfo.range = VK_WHOLE_SIZE;
 
   descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   descriptorWrites[4].dstSet = vkDescriptorSet;
   descriptorWrites[4].dstBinding = 4;
   descriptorWrites[4].descriptorCount = 1;
   descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  descriptorWrites[4].pBufferInfo = &volumeBufferInfo;
+  descriptorWrites[4].pBufferInfo = &lightBufferInfo;
 
-  VkDescriptorBufferInfo voxelDataBufferInfo{};
-  voxelDataBufferInfo.buffer = vkVoxelDataBuffer;
-  voxelDataBufferInfo.offset = 0;
-  voxelDataBufferInfo.range = VK_WHOLE_SIZE;
+  VkDescriptorBufferInfo volumeBufferInfo{};
+  volumeBufferInfo.buffer = vkVolumeBuffer;
+  volumeBufferInfo.offset = 0;
+  volumeBufferInfo.range = VK_WHOLE_SIZE;
 
   descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   descriptorWrites[5].dstSet = vkDescriptorSet;
   descriptorWrites[5].dstBinding = 5;
   descriptorWrites[5].descriptorCount = 1;
   descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  descriptorWrites[5].pBufferInfo = &voxelDataBufferInfo;
+  descriptorWrites[5].pBufferInfo = &volumeBufferInfo;
+
+  VkDescriptorBufferInfo voxelDataBufferInfo{};
+  voxelDataBufferInfo.buffer = vkVoxelDataBuffer;
+  voxelDataBufferInfo.offset = 0;
+  voxelDataBufferInfo.range = VK_WHOLE_SIZE;
+
+  descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  descriptorWrites[6].dstSet = vkDescriptorSet;
+  descriptorWrites[6].dstBinding = 6;
+  descriptorWrites[6].descriptorCount = 1;
+  descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  descriptorWrites[6].pBufferInfo = &voxelDataBufferInfo;
 
   vkUpdateDescriptorSets(vkDevice,
                          static_cast<uint32_t>(descriptorWrites.size()),
@@ -946,9 +1009,9 @@ void VulkanRenderer::recordComputeCommands(const PushConstants &pushConstants) {
   vkCmdPushConstants(cmdBuffer, vkPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                      0, sizeof(PushConstants), &pushConstants);
 
-  // Dispatch compute shader
-  uint32_t groupCountX = (windowWidth + 15) / 16;
-  uint32_t groupCountY = (windowHeight + 15) / 16;
+  // Dispatch compute shader with 8x8 workgroups (optimized for AMD RDNA 3)
+  uint32_t groupCountX = (windowWidth + 7) / 8;
+  uint32_t groupCountY = (windowHeight + 7) / 8;
   vkCmdDispatch(cmdBuffer, groupCountX, groupCountY, 1);
 
   vkEndCommandBuffer(cmdBuffer);
@@ -1341,6 +1404,15 @@ void VulkanRenderer::shutdown() {
     if (vkSphereBufferMemory != VK_NULL_HANDLE) {
       vkFreeMemory(vkDevice, vkSphereBufferMemory, nullptr);
       vkSphereBufferMemory = VK_NULL_HANDLE;
+    }
+
+    if (vkEllipsoidBuffer != VK_NULL_HANDLE) {
+      vkDestroyBuffer(vkDevice, vkEllipsoidBuffer, nullptr);
+      vkEllipsoidBuffer = VK_NULL_HANDLE;
+    }
+    if (vkEllipsoidBufferMemory != VK_NULL_HANDLE) {
+      vkFreeMemory(vkDevice, vkEllipsoidBufferMemory, nullptr);
+      vkEllipsoidBufferMemory = VK_NULL_HANDLE;
     }
 
     if (vkMaterialBuffer != VK_NULL_HANDLE) {
