@@ -13,7 +13,8 @@
 class VulkanDevice;
 
 // GPU-friendly scene data structures
-struct GPUSphere {
+struct GPUSphere
+{
   glm::vec3 center;
   float radius;
   glm::vec3 color;
@@ -22,7 +23,8 @@ struct GPUSphere {
 
 // GPUEllipsoid is defined in Ellipsoid.h
 
-struct GPUMaterial {
+struct GPUMaterial
+{
   glm::vec4 colorAndAmbient;      // color.xyz, ambient.w
   glm::vec4 diffuseSpecularShiny; // diffuse.x, specular.y, shininess.z,
                                   // reflectivity.w
@@ -32,14 +34,16 @@ struct GPUMaterial {
   glm::vec4 scatterAndAbsorption; // scatterColor.xyz, absorptionCoeff.w
 };
 
-struct GPULight {
+struct GPULight
+{
   glm::vec3 position;
   float intensity;
   glm::vec3 color;
   float padding;
 };
 
-struct GPUVolumetricData {
+struct GPUVolumetricData
+{
   glm::vec3 position;
   float scale;
   glm::vec3 v0;
@@ -52,7 +56,8 @@ struct GPUVolumetricData {
 };
 
 // Push constants for shader
-struct PushConstants {
+struct PushConstants
+{
   glm::mat4 cameraMatrix;  // offset 0, size 64
   glm::vec3 cameraPos;     // offset 64, size 12
   float time;              // offset 76, size 4
@@ -70,7 +75,8 @@ struct PushConstants {
   float padding5;          // offset 140, size 4
 };
 
-class VulkanRenderer {
+class VulkanRenderer
+{
 public:
   VulkanRenderer();
   ~VulkanRenderer();
@@ -89,13 +95,11 @@ public:
   void render(const PushConstants &pushConstants);
   void present();
 
-  bool readbackOutputImage(std::vector<uint32_t> &imageData);
-  bool saveFrameToPPM(const std::string &filename);
-
   VkImage getOutputImage() const { return vkOutputImage; }
 
   // Get shader path to index mapping (populated after shader loading)
-  const std::unordered_map<std::string, int> &getShaderPathToIndexMap() const {
+  const std::unordered_map<std::string, int> &getShaderPathToIndexMap() const
+  {
     return shaderPathToIndex_;
   }
 
@@ -110,7 +114,6 @@ private:
   bool createSwapChain(SDL_Window *window);
 
   void recordComputeCommands(const PushConstants &pushConstants);
-  void submitAndPresent();
   bool blitToSwapchain();
 
   // Vulkan core
