@@ -23,7 +23,6 @@ vec3 hsl2rgb(vec3 hsl) {
 
 SurfaceShaderResult surfaceShader_Rainbow(SurfaceShaderData data) {
     SurfaceShaderResult result;
-    // We render a solid emissive sweep, so disable non-emissive contribution.
     result.color = vec3(0.0);
     result.emissive = vec3(0.0);
     result.emissiveStrength = data.emissiveStrength;
@@ -32,17 +31,14 @@ SurfaceShaderResult surfaceShader_Rainbow(SurfaceShaderData data) {
     result.specular = 0.0;
     result.shininess = data.shininess;
 
-    // Parameters you can tweak:
     vec3 sweepDir = normalize(vec3(1.0, 0.5, 0.25)); // sweep direction in world space
     float freq = 2.0;    // spatial frequency of the sweep
     float speed = 0.002; // time speed of the sweep
 
-    // Cosine-driven phase -> map to [0,1] for hue
     float phase = dot(data.hitPoint, sweepDir) * freq + data.time * speed;
     float cosVal = cos(phase);
     float hue = fract(0.5 + 0.5 * cosVal); // smooth circular mapping with cosine
 
-    // Solid vivid colors: full saturation, mid lightness
     float saturation = 1.0;
     float lightness = 0.5;
     vec3 emissiveColor = hsl2rgb(vec3(hue, saturation, lightness));

@@ -295,8 +295,6 @@ vec3 calculateLighting(HitRecord rec, vec3 viewDir) {
         // Return combined color and emissive
         return shaderResult.color + shaderResult.emissive;
         
-        // Fallback to Phong if dispatch doesn't match
-        // (This shouldn't happen if shader loading worked correctly)
     }
     
     // Default: Phong shading (shader function 0)
