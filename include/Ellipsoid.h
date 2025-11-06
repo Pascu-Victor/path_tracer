@@ -5,6 +5,7 @@
 
 // Forward declarations
 class Material;
+class Quaternion;
 
 // GPU structure for ellipsoid (defined here to avoid conflicts)
 struct GPUEllipsoid {
@@ -14,6 +15,7 @@ struct GPUEllipsoid {
   int materialIndex;
   glm::vec3 color;
   float padding2;
+  glm::vec4 rotation;  // Quaternion as (x, y, z, w)
 };
 
 // Ellipsoid wrapper class
@@ -21,12 +23,13 @@ class Ellipsoid {
 public:
   Ellipsoid() noexcept
       : center_(glm::vec3(0.0f)), radii_(glm::vec3(1.0f)),
-        color_(glm::vec3(1.0f)), material_(nullptr), materialIndex_(-1) {}
+        color_(glm::vec3(1.0f)), material_(nullptr), materialIndex_(-1),
+        rotation_(0.0f, 0.0f, 0.0f, 1.0f) {}
 
   Ellipsoid(const glm::vec3 &center, const glm::vec3 &radii,
             const glm::vec3 &color, const Material &material) noexcept
       : center_(center), radii_(radii), color_(color), material_(&material),
-        materialIndex_(-1) {}
+        materialIndex_(-1), rotation_(0.0f, 0.0f, 0.0f, 1.0f) {}
 
   // Accessors
   constexpr glm::vec3 getCenter() const noexcept { return center_; }
@@ -34,6 +37,7 @@ public:
   constexpr glm::vec3 getColor() const noexcept { return color_; }
   constexpr int getMaterialIndex() const noexcept { return materialIndex_; }
   const Material *getMaterial() const noexcept { return material_; }
+  constexpr glm::vec4 getRotation() const noexcept { return rotation_; }
 
   // Mutators
   constexpr void setCenter(const glm::vec3 &center) noexcept {
@@ -44,6 +48,9 @@ public:
   void setMaterial(const Material &material) noexcept {
     material_ = &material;
     materialIndex_ = -1; // Reset index when material changes
+  }
+  constexpr void setRotation(const glm::vec4 &quat) noexcept {
+    rotation_ = quat;
   }
 
   // Internal method used by pre-render to set resolved material index
@@ -58,6 +65,7 @@ private:
   glm::vec3 color_;
   const Material *material_; // Reference to material instance
   int materialIndex_;        // Resolved index after pre-render
+  glm::vec4 rotation_;       // Quaternion rotation (x, y, z, w)
 };
 
 #endif // ELLIPSOID_H

@@ -22,6 +22,7 @@ set(SOURCES
     src/main_vulkan.cpp
     src/Vec3.cpp
     src/Ray.cpp
+    src/Quaternion.cpp
     src/Material.cpp
     src/Object.cpp
     src/Sphere.cpp
@@ -38,6 +39,7 @@ set(SOURCES
 set(HEADERS
     include/Vec3.h
     include/Ray.h
+    include/Quaternion.h
     include/Material.h
     include/Object.h
     include/Sphere.h

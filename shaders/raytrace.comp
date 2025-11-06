@@ -28,6 +28,7 @@ struct Ellipsoid {
     int materialIndex;
     vec3 color;
     float padding2;
+    vec4 rotation;
 };
 
 layout(set = 0, binding = 2) readonly buffer EllipsoidBuf {
@@ -93,6 +94,26 @@ const float PI = 3.14159265359;
 const float MAX_DISTANCE = 1e10;
 const float EPSILON = 0.001;
 
+// ============= QUATERNION ROTATION FUNCTIONS =============
+// Rotate a vector by a quaternion: v' = q * v * q^-1
+vec3 rotateByQuaternion(vec3 v, vec4 q) {
+    // q = (x, y, z, w)
+    // For unit quaternions: q^-1 = conjugate(q) = (-x, -y, -z, w)
+    vec3 qxyz = q.xyz;
+    float qw = q.w;
+    
+    // v' = v + 2 * w * (qxyz x v) + 2 * (qxyz x (qxyz x v))
+    vec3 t = 2.0 * cross(qxyz, v);
+    return v + qw * t + cross(qxyz, t);
+}
+
+// Inverse rotation (rotate by conjugate of quaternion)
+vec3 inverseRotateByQuaternion(vec3 v, vec4 q) {
+    // Use conjugate: q_conj = (-x, -y, -z, w)
+    vec4 q_conj = vec4(-q.xyz, q.w);
+    return rotateByQuaternion(v, q_conj);
+}
+
 float random(vec2 st) {
     return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
 }
@@ -146,14 +167,17 @@ bool hitSphere(Ray ray, vec3 center, float radius, float tMin, float tMax, inout
     return true;
 }
 
-// Ellipsoid intersection - transforms ray to unit sphere space
-bool hitEllipsoid(Ray ray, vec3 center, vec3 radii, float tMin, float tMax, inout HitRecord rec) {
-    vec3 oc = ray.origin - center;
+// Ellipsoid intersection - transforms ray to unit sphere space and applies rotation
+bool hitEllipsoid(Ray ray, vec3 center, vec3 radii, vec4 rotation, float tMin, float tMax, inout HitRecord rec) {
+    // Transform ray to local ellipsoid space by applying inverse rotation
+    vec3 oc_world = ray.origin - center;
+    vec3 oc = inverseRotateByQuaternion(oc_world, rotation);
+    vec3 dir = inverseRotateByQuaternion(ray.direction, rotation);
     
     // Scale by inverse radii
     vec3 invRadii = 1.0 / radii;
     vec3 ocScaled = oc * invRadii;
-    vec3 dirScaled = ray.direction * invRadii;
+    vec3 dirScaled = dir * invRadii;
     
     // solve for unit sphere intersection
     float a = dot(dirScaled, dirScaled);
@@ -173,9 +197,13 @@ bool hitEllipsoid(Ray ray, vec3 center, vec3 radii, float tMin, float tMax, inou
     
     rec.t = t;
     rec.point = ray.origin + t * ray.direction;
-    // Normal in ellipsoid space: gradient of (x/rx)^2 + (y/ry)^2 + (z/rz)^2 = 1
-    vec3 normalUnscaled = (rec.point - center) * invRadii * invRadii;
-    rec.normal = normalize(normalUnscaled);
+    
+    // Normal in local ellipsoid space: gradient of (x/rx)^2 + (y/ry)^2 + (z/rz)^2 = 1
+    vec3 localPoint = oc + t * dir;
+    vec3 normalLocal = localPoint * invRadii * invRadii;
+    
+    // Transform normal back to world space
+    rec.normal = normalize(rotateByQuaternion(normalLocal, rotation));
     rec.hit = true;
     
     return true;
@@ -201,7 +229,7 @@ bool traceRay(Ray ray, out HitRecord rec, float tMin, float tMax) {
         Ellipsoid ellipsoid = ellipsoidBuffer.ellipsoidData[i];
         
         HitRecord tempRec;
-        if (hitEllipsoid(ray, ellipsoid.center, ellipsoid.radii, tMin, closestT, tempRec)) {
+        if (hitEllipsoid(ray, ellipsoid.center, ellipsoid.radii, ellipsoid.rotation, tMin, closestT, tempRec)) {
             closestT = tempRec.t;
             rec = tempRec;
             rec.materialIndex = ellipsoid.materialIndex;

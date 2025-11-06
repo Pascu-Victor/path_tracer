@@ -958,8 +958,8 @@ void VulkanRenderer::updateScene(const std::vector<GPUSphere> &spheres,
     }
   }
 
-  // Copy voxel data
-  if (!voxelData.empty()) {
+  // Copy voxel data (only upload once - persistent in VRAM)
+  if (!voxelData.empty() && !voxelDataUploaded) {
     VkDeviceSize size = voxelData.size();
     if (useDeviceLocalBuffers) {
       VkBuffer stagingBuf;
@@ -982,8 +982,8 @@ void VulkanRenderer::updateScene(const std::vector<GPUSphere> &spheres,
       std::memcpy(data, voxelData.data(), size);
       vkUnmapMemory(vkDevice, vkVoxelDataBufferMemory);
     }
-    std::cout << "Uploaded " << voxelData.size()
-              << " bytes of voxel data to GPU" << std::endl;
+    voxelDataUploaded = true;  // Mark as uploaded
+    std::cout << "Voxel data uploaded to VRAM (" << size << " bytes)" << std::endl;
   }
 
   // Update descriptor set with new buffers

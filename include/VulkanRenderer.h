@@ -158,6 +158,7 @@ private:
 
   VkBuffer vkVoxelDataBuffer = VK_NULL_HANDLE;
   VkDeviceMemory vkVoxelDataBufferMemory = VK_NULL_HANDLE;
+  bool voxelDataUploaded = false;  // Flag to track if voxel data is already in VRAM
 
   int windowWidth = 800;
   int windowHeight = 600;

@@ -1,5 +1,6 @@
 #include "Camera.h"
 #include "Ellipsoid.h"
+#include "Quaternion.h"
 #include "SceneWrappers.h"
 #include "Vec3.h"
 #include "VulkanRenderer.h"
@@ -72,6 +73,11 @@ bool loadVolumetricData(const std::string &datFile, const std::string &rawFile,
 
   std::cout << "Loaded volumetric data: " << bytesRead << " bytes" << std::endl;
   return true;
+}
+
+// Helper function to convert Quaternion to glm::vec4
+glm::vec4 quaternionToGlm(const Quaternion &q) {
+  return glm::vec4(q.x, q.y, q.z, q.w);
 }
 
 int main(int argc, char *argv[]) {
@@ -330,13 +336,28 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // Orbit camera around the volume center
+    // Orbit camera around the volume center and compute camera rotation
     double x = 2.0 + orbitRadius * std::cos(theta);
     double z = 6.0 + orbitRadius * std::sin(theta);
     Vec3 newCameraPos(x, 1.5, z);
 
     camera.setLookFrom(newCameraPos);
     theta += 1.0 / 180.0;
+
+    // Create camera rotation from the orbital angle
+    // The camera orbits around Y-axis at speed theta
+    Quaternion cameraRotation = Quaternion::fromAxisAngle(Vec3(0, 1, 0), theta);
+
+    // Apply the same rotation to all ellipsoids
+    for (size_t i = 0; i < ellipsoids.size(); i++) {
+      ellipsoids[i].setRotation(
+          quaternionToGlm(Quaternion::fromAxisAngle(Vec3(2, 1, 0), theta)));
+      gpuEllipsoids[i] = ellipsoids[i].toGPU();
+    }
+
+    // Update scene with rotated ellipsoids
+    vulkanRenderer.updateScene(gpuSpheres, gpuEllipsoids, gpuMaterials,
+                               gpuLights, gpuVolumes, volumeData);
 
     // Update only dynamic push constants
     glm::vec3 eye(camera.origin.x, camera.origin.y, camera.origin.z);
